@@ -1,5 +1,5 @@
 import os from 'node:os'
-import { DEFAULT_IGNORED_PATHS, normalizeMemory } from './configuration.js'
+import { DEFAULT_IGNORED_PATHS, jvmArguments, normalizeMemory } from './configuration.js'
 import { filterPreservedDownloads } from './preservation.js'
 /**
  * @license MIT
@@ -16,7 +16,9 @@ import path_ from 'node:path'
 import FileManager from './filemanager.js'
 import Downloader from '../utils/downloader.js'
 import Cleaner from './cleaner.js'
-import Java from '../java/java.js'
+import Java, { JavaInfo } from '../java/java.js'
+import fs from 'node:fs/promises'
+import type { File } from '../../types/file.js'
 import LoaderManager from './loadermanager.js'
 import ArgumentManager from './argumentmanager.js'
 import { spawn } from 'node:child_process'
@@ -24,6 +26,17 @@ import { EMLLibError, ErrorType } from '../../types/errors.js'
 import loader from '../utils/loader.js'
 import logParser from '../utils/logparser.js'
 import { OperationOptions, checkCancellation, withOperation } from '../utils/operation.js'
+
+export interface LaunchOptions extends OperationOptions {
+  optimization?: boolean
+  debug?: boolean
+}
+
+export interface InstallationReport {
+  downloads: File[]
+  downloadSize: number
+  java: { requiredVersion: number; info?: JavaInfo; error?: string }
+}
 
 export default class Launcher
   extends EventEmitter<LauncherEvents & DownloaderEvents & CleanerEvents & FileManagerEvents & JavaEvents & PatcherEvents>
@@ -94,46 +107,105 @@ export default class Launcher
    *
    * _This method will patch the [Log4j vulnerability](https://help.minecraft.net/hc/en-us/articles/4416199399693-Security-Vulnerability-in-Minecraft-Java-Edition)._
    */
-  async launch(options: OperationOptions = {}): Promise<void> {
+  async launch(options: LaunchOptions = {}): Promise<void> {
+    await this.execute('launch', options)
+  }
+
+  /** Inspect managed files without changing the instance; installer metadata uses a disposable directory. */
+  inspect(options: OperationOptions = {}): Promise<InstallationReport> {
+    return this.execute('inspect', options)
+  }
+
+  /** Restore managed files and extracted content without starting Minecraft or deleting user files. */
+  repair(options: OperationOptions = {}): Promise<InstallationReport> {
+    return this.execute('repair', options)
+  }
+
+  private async execute(mode: 'launch' | 'inspect' | 'repair', options: LaunchOptions): Promise<InstallationReport> {
     if (this.launchInProgress) throw new EMLLibError(ErrorType.INVALID_OPERATION, 'This launcher already has an active launch.')
     this.launchInProgress = true
+    let scratch: string | undefined
     try {
-      await withOperation(options, () => this.prepareAndRun())
+      return await withOperation(options, async () => {
+        scratch = await fs.mkdtemp(path_.join(os.tmpdir(), 'eml-inspect-'))
+        return this.prepareAndRun(mode, options, scratch)
+      })
     } catch (error) {
       if (error instanceof EMLLibError && error.code === ErrorType.OPERATION_CANCELLED) this.emit('launch_cancelled')
       throw error
     } finally {
-      this.launchInProgress = false
+      try {
+        if (scratch) {
+          if (path_.dirname(path_.resolve(scratch)) !== path_.resolve(os.tmpdir()) || !path_.basename(scratch).startsWith('eml-inspect-'))
+            throw new EMLLibError(ErrorType.FILE_ERROR, 'Unexpected inspection directory; cleanup refused.')
+          await fs.rm(scratch, { recursive: true, force: true })
+        }
+      } finally {
+        this.launchInProgress = false
+      }
     }
   }
 
-  private async prepareAndRun(): Promise<void> {
+  private async prepareAndRun(mode: 'launch' | 'inspect' | 'repair', options: LaunchOptions, scratch?: string): Promise<InstallationReport> {
     //* Init downloader
     const downloader = new Downloader(this.config.root, this.config.profile.token, { adminToolUrl: this.config.url })
 
     //* Init loader
     this.config.minecraft = await loader.updateMinecraftConfig(this.config)
     checkCancellation()
+    const minecraftManifest = await manifests.getMinecraftManifest(this.config)
+    const java = new Java(this.config)
+    java.forwardEvents(this)
+    const javaStatus: InstallationReport['java'] = { requiredVersion: minecraftManifest.javaVersion?.majorVersion ?? 8 }
+    const verifyJava = async () => {
+      javaStatus.info = await java.check(this.config.java.absolutePath, javaStatus.requiredVersion)
+      delete javaStatus.error
+    }
+    const preflight = async () => {
+      try {
+        await verifyJava()
+      } catch (error) {
+        checkCancellation()
+        if (!(error instanceof EMLLibError) || error.code !== ErrorType.JAVA_ERROR) throw error
+        javaStatus.error = error.message
+        if (mode !== 'inspect' && this.config.java.install === 'manual') throw error
+      }
+    }
+    await preflight()
+    const metadataConfig = scratch ? { ...this.config, root: scratch } : this.config
     const installer = await loader.getInstaller(this.config)
-    await downloader.download(installer ? [installer] : [])
+    const installerDownloads = await downloader.getFilesToDownload(installer ? [installer] : [], { readOnly: true })
+    const installerConfig = installerDownloads.length ? metadataConfig : this.config
+    await new Downloader(installerConfig.root).download(installerDownloads)
 
     //* Init manifests
-    const minecraftManifest = await manifests.getMinecraftManifest(this.config)
-    const installProfile = await manifests.getInstallProfile(this.config, installer)
-    const loaderManifest = await manifests.getLoaderManifests(this.config, installProfile, installer)
+    const installProfile = await manifests.getInstallProfile(installerConfig, installer)
+    const loaderManifest = await manifests.getLoaderManifests(installerConfig, installProfile, installer)
+    if ((loaderManifest?.javaVersion?.majorVersion ?? 0) > javaStatus.requiredVersion) {
+      minecraftManifest.javaVersion = loaderManifest!.javaVersion
+      javaStatus.requiredVersion = minecraftManifest.javaVersion!.majorVersion
+      await preflight()
+    }
     checkCancellation()
+    if (mode !== 'inspect' && installerDownloads.length) {
+      const cached = await fs.readFile(path_.join(installerConfig.root, installer!.path, installer!.name))
+      await new Downloader(this.config.root, undefined, { fetch: async () => new Response(cached) }).download(installerDownloads)
+    }
 
-    const fileManager = new FileManager(this.config, minecraftManifest, loaderManifest, installProfile, installer)
+    const fileManager = new FileManager(
+      mode === 'inspect' ? metadataConfig : this.config,
+      minecraftManifest,
+      loaderManifest,
+      installProfile,
+      installer
+    )
     const loaderManager = new LoaderManager(this.config, minecraftManifest, loaderManifest, installProfile, installer)
-    const argumentManager = new ArgumentManager(this.config, minecraftManifest, loaderManifest)
     const cleaner = new Cleaner(this.config)
-    const java = new Java(this.config)
 
     fileManager.forwardEvents(this)
     loaderManager.forwardEvents(this)
     downloader.forwardEvents(this)
     cleaner.forwardEvents(this)
-    java.forwardEvents(this)
 
     //* Compute download
     checkCancellation()
@@ -147,18 +219,20 @@ export default class Launcher
     const injectorFiles = await fileManager.getInjector()
     const loggingFiles = await fileManager.getLogging()
 
-    const javaFilesToDownload = await downloader.getFilesToDownload(javaFiles.java)
+    const scan = (files: File[]) => downloader.getFilesToDownload(files, { readOnly: mode === 'inspect' })
+    const javaFilesToDownload = await scan(javaFiles.java)
     const modpackFilesToDownload = await filterPreservedDownloads(
-      await downloader.getFilesToDownload(modpackFiles.modpack),
+      await scan(modpackFiles.modpack),
       this.config.root,
       this.config.cleaning.preserveExisting ?? []
     )
-    const librariesFilesToDownload = await downloader.getFilesToDownload(librariesFiles.libraries)
-    const assetsFilesToDownload = await downloader.getFilesToDownload(assetsFiles.assets)
-    const loaderLibrariesFilesToDownload = await downloader.getFilesToDownload(loaderLibrariesFiles.libraries)
-    const injectorFilesToDownload = await downloader.getFilesToDownload(injectorFiles.injector)
-    const loggingFilesToDownload = await downloader.getFilesToDownload(loggingFiles.logging)
+    const librariesFilesToDownload = await scan(librariesFiles.libraries)
+    const assetsFilesToDownload = await scan(assetsFiles.assets)
+    const loaderLibrariesFilesToDownload = await scan(loaderLibrariesFiles.libraries)
+    const injectorFilesToDownload = await scan(injectorFiles.injector)
+    const loggingFilesToDownload = await scan(loggingFiles.logging)
     const filesToDownload = [
+      ...(mode === 'inspect' ? installerDownloads : []),
       ...javaFilesToDownload,
       ...modpackFilesToDownload,
       ...librariesFilesToDownload,
@@ -167,6 +241,8 @@ export default class Launcher
       ...injectorFilesToDownload,
       ...loggingFilesToDownload
     ]
+    const report = { downloads: filesToDownload, downloadSize: filesToDownload.reduce((sum, file) => sum + (file.size ?? 0), 0), java: javaStatus }
+    if (mode === 'inspect') return report
 
     //* Download
     checkCancellation()
@@ -178,6 +254,9 @@ export default class Launcher
     })
 
     await downloader.download(javaFilesToDownload, true)
+    checkCancellation()
+    this.emit('launch_check_java')
+    if (!javaStatus.info || javaStatus.error || javaFilesToDownload.length) await verifyJava()
     await downloader.download(modpackFilesToDownload, true)
     await downloader.download(librariesFilesToDownload, true)
     await downloader.download(assetsFilesToDownload, true)
@@ -204,6 +283,8 @@ export default class Launcher
     checkCancellation()
     this.emit('launch_copy_assets')
     const copiedAssetsFiles = await fileManager.copyAssets()
+    checkCancellation()
+    if (mode === 'repair') return report
 
     //* Clean
     checkCancellation()
@@ -224,10 +305,7 @@ export default class Launcher
     ]
     await cleaner.clean(files, this.config.cleaning.ignored, !this.config.cleaning.enabled)
 
-    //* Check Java
-    checkCancellation()
-    this.emit('launch_check_java')
-    const javaInfo = await java.check(this.config.java.absolutePath, minecraftManifest.javaVersion?.majorVersion ?? 8)
+    const javaInfo = javaStatus.info!
 
     //* Launch
     checkCancellation()
@@ -236,12 +314,24 @@ export default class Launcher
       java: { ...this.config.java, version: javaInfo.version }
     })
 
+    const argumentManager = new ArgumentManager(
+      {
+        ...this.config,
+        java: {
+          ...this.config.java,
+          args: options.optimization || options.debug ? jvmArguments(options, this.config.java.args, javaInfo) : this.config.java.args
+        }
+      },
+      minecraftManifest,
+      loaderManifest
+    )
     const customAuth = argumentManager.getCustomArgs(injectorFiles)
     const args = argumentManager.getArgs([...loaderFiles.libraries, ...librariesFiles.libraries, ...loaderLibrariesFiles.libraries], customAuth)
     const blindArgs = args.map((arg, i) => (i === args.findIndex((p) => p === '--accessToken') + 1 ? '**********' : arg))
     this.emit('launch_debug', `Launching Minecraft with args: ${blindArgs.join(' ')}`)
 
     await this.run(this.config.java.absolutePath.replace('${X}', minecraftManifest.javaVersion?.majorVersion.toString() ?? '8'), args)
+    return report
   }
 
   // @ts-ignore

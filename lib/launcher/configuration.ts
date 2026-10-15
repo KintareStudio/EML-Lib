@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from '../../types/config.js'
+import type { JavaInfo } from '../java/java.js'
 
 export interface LaunchSummary {
   minecraft: { version?: string; loader?: { loader: string; version?: string } }
@@ -81,12 +82,20 @@ export function javaConfiguration(selection: string): {
   return { install: 'manual', absolutePath: selection }
 }
 
-export function jvmArguments(options: { optimization?: boolean; debug?: boolean }, existing: string[] = []): string[] {
+export function jvmArguments(
+  options: { optimization?: boolean; debug?: boolean },
+  existing: string[] = [],
+  java?: Pick<JavaInfo, 'majorVersion' | 'vmName'>
+): string[] {
+  const optimize =
+    options.optimization &&
+    (!java || (java.majorVersion >= 15 && /HotSpot|OpenJDK.*VM/i.test(java.vmName))) &&
+    (!java || !existing.some((arg) => /^-XX:[+-]Use\w*GC$/.test(arg)))
   return [
     ...new Set([
       ...existing,
-      ...(options.optimization ? ['-XX:+UseZGC', '-XX:+ZGenerational'] : []),
-      ...(options.debug ? ['-XX:-OmitStackTraceInFastThrow'] : [])
+      ...(optimize ? ['-XX:+UseZGC', ...(!java || (java.majorVersion >= 21 && java.majorVersion < 23) ? ['-XX:+ZGenerational'] : [])] : []),
+      ...(options.debug && (!java || /HotSpot|OpenJDK.*VM/i.test(java.vmName)) ? ['-XX:-OmitStackTraceInFastThrow'] : [])
     ])
   ]
 }

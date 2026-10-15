@@ -31,6 +31,8 @@ La edición local había cambiado dos valores predeterminados. En esta publicaci
 
 Las correcciones de memoria, reglas Mojang, extracción y protección de credenciales sí corrigen comportamientos defectuosos. No se promete reproducir esos fallos de upstream.
 
+La [segunda entrega](instance-repair.es.md) añade `Launcher.inspect()` y `repair()` reutilizando la preparación existente, y adelanta la comprobación de Java. `Java.check()` ahora rechaza ejecutables inválidos, versiones inferiores al mínimo declarado y arquitecturas incompatibles; sus campos y eventos anteriores se conservan. La selección de opciones de JVM sigue siendo optativa.
+
 ## EML AdminTool oficial
 
 No se requiere un fork del servidor. Profile, News, Background, Maintenance, Bootstrap y las rutas de archivos siguen consumiendo la interfaz oficial. Los guardarropas y OIDC de Kintare son servicios adicionales opcionales de Kintare; no se presentan como endpoints de AdminTool.

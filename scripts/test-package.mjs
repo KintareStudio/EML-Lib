@@ -39,7 +39,7 @@ try {
   await writeFile(
     path.join(temporary, 'consumer.mts'),
     `
-import EML, { type Account, type Config, type IProfile, type OperationOptions, type DownloaderOptions, Downloader, KintareClient, EMLLibError, ErrorType } from 'eml-lib'
+import EML, { type Account, type Config, type IProfile, type OperationOptions, type DownloaderOptions, type InstallationReport, type JavaInfo, Downloader, KintareClient, EMLLibError, ErrorType } from 'eml-lib'
 import DeepProfile from 'eml-lib/lib/profile/profile.js'
 import DeepDownloader from 'eml-lib/lib/utils/downloader.js'
 import index from 'eml-lib/index.js'
@@ -56,6 +56,11 @@ launcher.on('download_cancelled', ({ downloaded }) => { const size: number = dow
 async function cancellationConsumers() {
   await launcher.launch()
   await launcher.launch(operation)
+  await launcher.launch({ ...operation, optimization: true, debug: true })
+  const inspected: InstallationReport = await launcher.inspect(operation)
+  const repaired: InstallationReport = await launcher.repair(operation)
+  const java: JavaInfo = await new EML.Java({ root: 'fixture' }).check('java', 21, operation)
+  void [inspected.downloads, repaired.java.info, java.majorVersion, java.architecture]
   await new EML.Java({ root: 'fixture', minecraft: { version: '1.21.1' } }).download(operation)
   await new DeepDownloader('fixture', 'profile-token').download([])
   await downloader.download([], false, { ...operation, retryDelayMs: 1 })

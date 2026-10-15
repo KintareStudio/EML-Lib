@@ -17,6 +17,24 @@ import { MinecraftManifest } from '../../types/manifest.js'
 import { ResolvedConfig } from '../../types/config.js'
 import { JavaConfig } from '../../types/java.js'
 
+export interface JavaInfo {
+  version: string
+  arch: '64-bit' | '32-bit'
+  majorVersion: number
+  architecture: string
+  vmName: string
+}
+
+export function parseJavaInfo(output: string): JavaInfo {
+  const property = (name: string) => new RegExp(`^\\s*${name.replaceAll('.', '\\.')}\\s*=\\s*(.+)$`, 'm').exec(output)?.[1].trim()
+  const version = property('java.version') ?? /(?:openjdk|java) version "([^"]+)"/.exec(output)?.[1] ?? ''
+  const majorVersion = Number(/^(?:1\.)?(\d+)/.exec(version)?.[1])
+  const raw = property('os.arch')?.toLowerCase() ?? ''
+  const architecture = ({ amd64: 'x64', x86_64: 'x64', aarch64: 'arm64', x86: 'ia32', i386: 'ia32' } as Record<string, string>)[raw] ?? raw
+  if (!majorVersion || !architecture) throw new EMLLibError(ErrorType.JAVA_ERROR, 'Java did not report a valid version and architecture.')
+  return { version, majorVersion, architecture, arch: architecture.includes('64') ? '64-bit' : '32-bit', vmName: property('java.vm.name') ?? '' }
+}
+
 export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
   private readonly url?: string
   private readonly root: string
@@ -139,24 +157,36 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
    */
   async check(
     absolutePath: string = path_.join(utils.getServerFolder(this.root), 'runtime', 'jre-${X}', 'bin', 'java'),
-    majorVersion: number = 8
-  ): Promise<{ version: string; arch: '64-bit' | '32-bit' }> {
-    let output = ''
-    try {
-      const code = await preparationProcess(absolutePath.replace('${X}', majorVersion + ''), ['-version'], {}, (chunk) => {
-        output += chunk.toString()
-      })
-      checkCancellation()
-      if (code !== 0 && output.length === 0) throw new EMLLibError(ErrorType.JAVA_ERROR, `Java exited with code ${code}`)
-      const version = output.match(/"(.*?)"/)?.[1] ?? String(majorVersion)
-      const res = { version, arch: (output.includes('64-Bit') ? '64-bit' : '32-bit') as '64-bit' | '32-bit' }
-      this.emit('java_info', res)
-      return res
-    } catch (error) {
-      checkCancellation()
-      if (error instanceof EMLLibError) throw error
-      throw new EMLLibError(ErrorType.JAVA_ERROR, `Java is not correctly installed: ${error instanceof Error ? error.message : error}`)
-    }
+    majorVersion: number = 8,
+    options: OperationOptions = {}
+  ): Promise<JavaInfo> {
+    return withOperation(options, async () => {
+      let output = ''
+      try {
+        const code = await preparationProcess(
+          absolutePath.replace('${X}', majorVersion + ''),
+          ['-XshowSettings:properties', '-version'],
+          {},
+          (chunk) => {
+            output += chunk.toString()
+          }
+        )
+        checkCancellation()
+        if (code !== 0) throw new EMLLibError(ErrorType.JAVA_ERROR, `Java exited with code ${code}`)
+        const res = parseJavaInfo(output)
+        if (res.majorVersion < majorVersion || res.architecture !== process.arch)
+          throw new EMLLibError(
+            ErrorType.JAVA_ERROR,
+            `Java ${majorVersion}+ (${process.arch}) is required; found ${res.version} (${res.architecture}).`
+          )
+        this.emit('java_info', { version: res.version, arch: res.arch })
+        return res
+      } catch (error) {
+        checkCancellation()
+        if (error instanceof EMLLibError) throw error
+        throw new EMLLibError(ErrorType.JAVA_ERROR, `Java is not correctly installed: ${error instanceof Error ? error.message : error}`)
+      }
+    })
   }
 
   private normalizeJavaPath(filePath: string, jreV: string) {

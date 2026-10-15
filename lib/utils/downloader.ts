@@ -114,14 +114,14 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
     }
   }
 
-  async getFilesToDownload(files: File[], options: OperationOptions = {}): Promise<File[]> {
+  async getFilesToDownload(files: File[], options: OperationOptions & { readOnly?: boolean } = {}): Promise<File[]> {
     const linked = linkedSignals([operationSignal(), this.options.signal, options.signal])
     try {
       const result: File[] = []
       for (const file of files) {
         checkCancellation(linked.signal)
         const target = this.filePath(file)
-        await this.directory(file.type === 'FOLDER' ? target : path.dirname(target), linked.signal)
+        if (!options.readOnly) await this.directory(file.type === 'FOLDER' ? target : path.dirname(target), linked.signal)
         if (file.type === 'FOLDER') continue
         let needed = false
         try {
