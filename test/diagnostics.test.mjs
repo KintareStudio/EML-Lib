@@ -212,7 +212,7 @@ test('Java timeout stops an owned hung process and distinguishes user cancellati
   await assert.rejects(java.check('unused', 8, { timeoutMs: 0 }), (error) => error.code === ErrorType.CONFIG_ERROR)
 })
 
-test('real loader processors repair corrupt declared outputs and reject successful exits with bad hashes', { timeout: 30000 }, async (t) => {
+test('real loader processors repair corrupt declared outputs and reject successful exits with bad hashes', { timeout: 120000 }, async (t) => {
   const root = await directory(t),
     classes = path.join(root, 'classes'),
     source = path.join(root, 'FixtureWriter.java')
@@ -222,10 +222,10 @@ test('real loader processors repair corrupt declared outputs and reject successf
     'import java.nio.file.*; public class FixtureWriter { public static void main(String[] args) throws Exception { Path file = Path.of(args[0]); Files.createDirectories(file.getParent()); Files.writeString(file, args[1]); } }'
   )
   const tool = (name) => (process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', name) : name)
-  execFileSync(tool('javac'), ['-d', classes, source], { windowsHide: true, timeout: 20000 })
+  execFileSync(tool('javac'), ['-d', classes, source], { windowsHide: true, timeout: 60000 })
   const jar = path.join(root, 'libraries', 'fixture', 'processor', '1', 'processor-1.jar')
   await fs.mkdir(path.dirname(jar), { recursive: true })
-  execFileSync(tool('jar'), ['--create', '--file', jar, '--main-class', 'FixtureWriter', '-C', classes, '.'], { windowsHide: true, timeout: 20000 })
+  execFileSync(tool('jar'), ['--create', '--file', jar, '--main-class', 'FixtureWriter', '-C', classes, '.'], { windowsHide: true, timeout: 60000 })
   const processor = { jar: 'fixture:processor:1', args: ['{OUTPUT}', 'good'], outputs: { '{OUTPUT}': '{HASH}' } }
   const profile = {
     data: { OUTPUT: { client: '[fixture:output:1]' }, HASH: { client: `'${sha1('good')}'` } },

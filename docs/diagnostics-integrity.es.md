@@ -4,7 +4,7 @@ La tercera entrega mantiene las llamadas anteriores de EML-Lib y el contrato de 
 
 ## Comprobación de Java con plazo máximo
 
-`Java.check(path, requiredVersion, { signal, timeoutMs })` usa diez segundos por defecto. Launcher permite configurar ese plazo con `javaTimeoutMs` en `launch()`, `inspect()` y `repair()`.
+`Java.check(path, requiredVersion, { signal, timeoutMs })` usa treinta segundos por defecto, para admitir también el primer arranque de una JVM en un sistema ocupado. Launcher permite configurar ese plazo con `javaTimeoutMs` en `launch()`, `inspect()` y `repair()`.
 
 ```ts
 await java.check('java', 21, { signal, timeoutMs: 5_000 })

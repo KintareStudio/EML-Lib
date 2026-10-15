@@ -165,7 +165,7 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
     options: JavaCheckOptions = {}
   ): Promise<JavaInfo> {
     return withOperation(options, async () => {
-      const timeoutMs = options.timeoutMs ?? 10_000
+      const timeoutMs = options.timeoutMs ?? 30_000
       if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 0xffffffff)
         throw new EMLLibError(ErrorType.CONFIG_ERROR, 'Invalid Java check timeout.')
       const deadline = AbortSignal.timeout(timeoutMs),
