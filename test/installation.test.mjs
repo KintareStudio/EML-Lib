@@ -108,7 +108,12 @@ async function fixture(t) {
             ])
           )
         )
-      if (url.endsWith('/runtime')) return Response.json({ files: runtimeFiles })
+      if (
+        url.endsWith('/runtime') ||
+        url === 'https://cdn.emlproject.com/patches/jre8/manifest-mac.json' ||
+        url === 'https://piston-meta.mojang.com/v1/packages/03828bb8455f3cef94869286a0d941dd16933239/manifest.json'
+      )
+        return Response.json({ files: runtimeFiles })
       if (url.endsWith('/assets')) return Response.json({ objects: {} })
       if (url.endsWith('/modpack')) return Response.json({ files })
       const body = bodies[new URL(url).pathname]
