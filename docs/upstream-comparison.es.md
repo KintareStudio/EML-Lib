@@ -33,6 +33,8 @@ Las correcciones de memoria, reglas Mojang, extracción y protección de credenc
 
 La [segunda entrega](instance-repair.es.md) añade `Launcher.inspect()` y `repair()` reutilizando la preparación existente, y adelanta la comprobación de Java. `Java.check()` ahora rechaza ejecutables inválidos, versiones inferiores al mínimo declarado y arquitecturas incompatibles; sus campos y eventos anteriores se conservan. La selección de opciones de JVM sigue siendo optativa.
 
+La [tercera entrega](diagnostics-integrity.es.md) añade timeout de comprobación de Java, motivos de inspección, hashes de salida de procesadores, protección compartida de logs, coordinación de objetos por carpeta y estimación de espacio. Mantiene las llamadas anteriores, las rutas de AdminTool y la selección manual de Java; las garantías y límites de cada comprobación están descritos en su documento.
+
 ## EML AdminTool oficial
 
 No se requiere un fork del servidor. Profile, News, Background, Maintenance, Bootstrap y las rutas de archivos siguen consumiendo la interfaz oficial. Los guardarropas y OIDC de Kintare son servicios adicionales opcionales de Kintare; no se presentan como endpoints de AdminTool.

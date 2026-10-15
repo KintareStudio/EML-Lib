@@ -188,6 +188,12 @@ test('inspection finds missing and corrupt files without modifying the instance 
   const report = await f.launcher.inspect()
   assert.deepEqual(report.downloads.map((file) => file.name).sort(), ['bad.jar', 'fixture.jar', 'missing.jar'])
   assert.equal(report.downloadSize, 5 + 3 + 'minecraft fixture'.length)
+  assert.deepEqual(report.issues.map(({ file, reason }) => [file.name, reason]).sort(), [
+    ['bad.jar', 'hash_mismatch'],
+    ['fixture.jar', 'missing'],
+    ['missing.jar', 'missing']
+  ])
+  assert.equal(report.space.sufficient, true)
   assert.equal(report.java.info.architecture, process.arch)
   assert.equal(report.java.error, undefined)
   assert.deepEqual(await f.snapshot(), before)
@@ -311,4 +317,34 @@ test('Forge installer metadata stays outside the instance until loader Java requ
   assert.ok(report.downloads.some((file) => file.name === 'neoforge-fixture-installer.jar'))
   await assert.rejects(f.launcher.repair(), javaError)
   await assert.rejects(fs.stat(f.launcher.config.root), (error) => error.code === 'ENOENT')
+})
+
+test('low disk space appears in inspection and blocks repair before any content download', async (t) => {
+  const f = await fixture(t)
+  const statfs = t.mock.method(fs, 'statfs', async () => ({ bavail: 0, bsize: 4096 }))
+  const report = await f.launcher.inspect()
+  assert.equal(report.space.sufficient, false)
+  await assert.rejects(f.launcher.repair(), (error) => error.code === ErrorType.FILE_ERROR && error.serverCode === 'INSUFFICIENT_SPACE')
+  assert.deepEqual(f.downloads, [])
+  await f.launcher.repair({ diskSpace: false })
+  assert.ok(f.downloads.length > 0)
+  assert.equal(statfs.mock.calls.length, 2)
+})
+
+test('launch masks diagnostic secrets while preserving the argument vector sent to Minecraft', async (t) => {
+  const f = await fixture(t),
+    events = []
+  f.launcher.config.cleaning.enabled = false
+  f.launcher.config.account.accessToken = 'sensitive-account-token'
+  f.launcher.config.java.args = ['-Dkintare.token=an extra secret with spaces']
+  f.manifest.arguments.game = ['--accessToken', '${auth_access_token}', '--password', 'another secret phrase']
+  f.launcher.on('launch_debug', (text) => events.push(text))
+  await f.launcher.launch()
+  assert.ok(f.launcher.fixtureArgs.includes('sensitive-account-token'))
+  assert.ok(f.launcher.fixtureArgs.includes('-Dkintare.token=an extra secret with spaces'))
+  assert.ok(f.launcher.fixtureArgs.includes('another secret phrase'))
+  for (const secret of ['sensitive-account-token', 'an extra secret with spaces', 'another secret phrase']) {
+    assert.ok(!events.join('\n').includes(secret))
+    assert.ok(!f.launcher.launcherLogs.join('\n').includes(secret))
+  }
 })

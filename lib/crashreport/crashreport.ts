@@ -9,6 +9,7 @@ import Launcher from '../launcher/launcher.js'
 import { CrashData } from '../../types/crashdata.js'
 import utils from '../utils/utils.js'
 import { spawn } from 'node:child_process'
+import { redactSecrets } from '../utils/redaction.js'
 
 const gzip = promisify(zlib.gzip)
 
@@ -237,7 +238,7 @@ ${sanLatestLog}
     cleaned = cleaned.replace(/(?<![\w:])(?:(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}|::1|::ffff:(?:\d{1,3}\.){3}\d{1,3})(?![\w:])/gi, '<IP>')
     cleaned = cleaned.replace(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '<JWT>')
 
-    return cleaned
+    return redactSecrets(cleaned, launcher.config, launcher.launchArgs)
   }
 
   private async transmit(payload: Record<string, any>): Promise<void> {

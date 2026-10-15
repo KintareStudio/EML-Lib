@@ -11,6 +11,7 @@ import EventEmitter from '../utils/events.js'
 import Patcher from './patcher.js'
 import ForgeLikeLoader from './forgelike.js'
 import { EMLLibError, ErrorType } from '../../types/errors.js'
+import type { FileIssue } from '../utils/downloader.js'
 
 export default class LoaderManager extends EventEmitter<FileManagerEvents & PatcherEvents> {
   private readonly config: ResolvedConfig
@@ -34,7 +35,7 @@ export default class LoaderManager extends EventEmitter<FileManagerEvents & Patc
     this.installer = installer
   }
 
-  async extract(): Promise<{ libraries: ExtraFile[], files: File[] }> {
+  async extract(): Promise<{ libraries: ExtraFile[]; files: File[] }> {
     const loader = this.config.minecraft.loader
     if (!loader || !this.loaderManifest || !this.installProfile || !this.installer || (loader.loader !== 'forge' && loader.loader !== 'neoforge')) {
       return { libraries: [], files: [] }
@@ -69,5 +70,9 @@ export default class LoaderManager extends EventEmitter<FileManagerEvents & Patc
     patcher.forwardEvents(this)
     return { files: await patcher.patch() }
   }
-}
 
+  async inspect(): Promise<FileIssue[]> {
+    if (!this.installProfile || !this.loaderManifest) return []
+    return new Patcher(this.config, this.minecraftManifest, this.loaderManifest, this.installProfile).inspect()
+  }
+}

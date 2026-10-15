@@ -8,6 +8,7 @@ The fork adds optional Kintare OIDC/wardrobe clients, a GitHub Releases agent ca
 - [Kintare integration](docs/kintare-client.es.md)
 - [Verified downloads, credential destinations and cancellation](docs/reliable-downloads.es.md)
 - [Java preflight, instance inspection and repair](docs/instance-repair.es.md)
+- [Diagnostics, processor integrity, shared-root operations and disk space](docs/diagnostics-integrity.es.md)
 - Build: `npm ci` followed by `npm run build`.
 - Offline tests: `npm run test:unit`. The upstream `npm test` remains an interactive Minecraft demonstration.
 - The package is named `@kintare/eml-lib`; an existing application may retain its `eml-lib` import name by using an npm package alias when consuming a published package.

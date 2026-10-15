@@ -30,7 +30,7 @@ En modo manual no cambia el ejecutable seleccionado ni instala otra JVM como alt
 
 La inspección no crea ni modifica la carpeta de la instancia. Consulta los manifiestos por red y usa un directorio temporal para los metadatos y, cuando haga falta, el instalador del loader. Esto no es un modo sin conexión. Respeta `cleaning.preserveExisting`: un archivo existente protegido se conserva aunque difiera del manifiesto. Sin tamaño ni hash declarados, solo puede comprobarse su existencia.
 
-El informe revisa los archivos descargables declarados, no certifica todos los archivos derivados por procesadores, natives o mods. `repair()` vuelve a preparar esos contenidos mediante los mecanismos existentes. En loaders antiguos que mezclan Forge con el JAR vanilla, el JAR resultante puede diferir del hash de entrada y volver a aparecer como descarga necesaria.
+El informe revisa los archivos descargables declarados y, desde la [tercera entrega](diagnostics-integrity.es.md), añade los motivos de revisión y las salidas de procesadores declaradas por el instalador. No certifica todos los archivos derivados por natives o mods sin metadatos de integridad. `repair()` vuelve a preparar esos contenidos mediante los mecanismos existentes. En loaders antiguos que mezclan Forge con el JAR vanilla, el JAR resultante puede diferir del hash de entrada y volver a aparecer como descarga necesaria.
 
 ## Reparación
 

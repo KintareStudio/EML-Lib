@@ -14,7 +14,7 @@ import utils from '../utils/utils.js'
 import { Config, ResolvedConfig } from './../../types/config.js'
 import path_ from 'node:path'
 import FileManager from './filemanager.js'
-import Downloader from '../utils/downloader.js'
+import Downloader, { FileIssue } from '../utils/downloader.js'
 import Cleaner from './cleaner.js'
 import Java, { JavaInfo } from '../java/java.js'
 import fs from 'node:fs/promises'
@@ -26,8 +26,14 @@ import { EMLLibError, ErrorType } from '../../types/errors.js'
 import loader from '../utils/loader.js'
 import logParser from '../utils/logparser.js'
 import { OperationOptions, checkCancellation, withOperation } from '../utils/operation.js'
+import { diskSpace, DiskSpaceInfo, lockInstance, requireSpace } from '../utils/installation-state.js'
+import { redactSecrets } from '../utils/redaction.js'
 
-export interface LaunchOptions extends OperationOptions {
+export interface PreparationOptions extends OperationOptions {
+  javaTimeoutMs?: number
+  diskSpace?: boolean
+}
+export interface LaunchOptions extends PreparationOptions {
   optimization?: boolean
   debug?: boolean
 }
@@ -36,6 +42,8 @@ export interface InstallationReport {
   downloads: File[]
   downloadSize: number
   java: { requiredVersion: number; info?: JavaInfo; error?: string }
+  issues: FileIssue[]
+  space?: DiskSpaceInfo
 }
 
 export default class Launcher
@@ -112,12 +120,12 @@ export default class Launcher
   }
 
   /** Inspect managed files without changing the instance; installer metadata uses a disposable directory. */
-  inspect(options: OperationOptions = {}): Promise<InstallationReport> {
+  inspect(options: PreparationOptions = {}): Promise<InstallationReport> {
     return this.execute('inspect', options)
   }
 
   /** Restore managed files and extracted content without starting Minecraft or deleting user files. */
-  repair(options: OperationOptions = {}): Promise<InstallationReport> {
+  repair(options: PreparationOptions = {}): Promise<InstallationReport> {
     return this.execute('repair', options)
   }
 
@@ -125,8 +133,10 @@ export default class Launcher
     if (this.launchInProgress) throw new EMLLibError(ErrorType.INVALID_OPERATION, 'This launcher already has an active launch.')
     this.launchInProgress = true
     let scratch: string | undefined
+    let release: (() => void) | undefined
     try {
       return await withOperation(options, async () => {
+        release = await lockInstance(this.config.root)
         scratch = await fs.mkdtemp(path_.join(os.tmpdir(), 'eml-inspect-'))
         return this.prepareAndRun(mode, options, scratch)
       })
@@ -141,6 +151,7 @@ export default class Launcher
           await fs.rm(scratch, { recursive: true, force: true })
         }
       } finally {
+        release?.()
         this.launchInProgress = false
       }
     }
@@ -149,6 +160,7 @@ export default class Launcher
   private async prepareAndRun(mode: 'launch' | 'inspect' | 'repair', options: LaunchOptions, scratch?: string): Promise<InstallationReport> {
     //* Init downloader
     const downloader = new Downloader(this.config.root, this.config.profile.token, { adminToolUrl: this.config.url })
+    const issues: FileIssue[] = []
 
     //* Init loader
     this.config.minecraft = await loader.updateMinecraftConfig(this.config)
@@ -158,7 +170,7 @@ export default class Launcher
     java.forwardEvents(this)
     const javaStatus: InstallationReport['java'] = { requiredVersion: minecraftManifest.javaVersion?.majorVersion ?? 8 }
     const verifyJava = async () => {
-      javaStatus.info = await java.check(this.config.java.absolutePath, javaStatus.requiredVersion)
+      javaStatus.info = await java.check(this.config.java.absolutePath, javaStatus.requiredVersion, { timeoutMs: options.javaTimeoutMs })
       delete javaStatus.error
     }
     const preflight = async () => {
@@ -174,8 +186,12 @@ export default class Launcher
     await preflight()
     const metadataConfig = scratch ? { ...this.config, root: scratch } : this.config
     const installer = await loader.getInstaller(this.config)
-    const installerDownloads = await downloader.getFilesToDownload(installer ? [installer] : [], { readOnly: true })
+    const installerDownloads = await downloader.getFilesToDownload(installer ? [installer] : [], {
+      readOnly: true,
+      onIssue: (issue) => issues.push(issue)
+    })
     const installerConfig = installerDownloads.length ? metadataConfig : this.config
+    if (options.diskSpace !== false && installerDownloads.length) requireSpace(await diskSpace(installerConfig.root, installer!.size ?? 0))
     await new Downloader(installerConfig.root).download(installerDownloads)
 
     //* Init manifests
@@ -188,6 +204,7 @@ export default class Launcher
     }
     checkCancellation()
     if (mode !== 'inspect' && installerDownloads.length) {
+      if (options.diskSpace !== false) requireSpace(await diskSpace(this.config.root, installer!.size ?? 0))
       const cached = await fs.readFile(path_.join(installerConfig.root, installer!.path, installer!.name))
       await new Downloader(this.config.root, undefined, { fetch: async () => new Response(cached) }).download(installerDownloads)
     }
@@ -219,7 +236,7 @@ export default class Launcher
     const injectorFiles = await fileManager.getInjector()
     const loggingFiles = await fileManager.getLogging()
 
-    const scan = (files: File[]) => downloader.getFilesToDownload(files, { readOnly: mode === 'inspect' })
+    const scan = (files: File[]) => downloader.getFilesToDownload(files, { readOnly: mode === 'inspect', onIssue: (issue) => issues.push(issue) })
     const javaFilesToDownload = await scan(javaFiles.java)
     const modpackFilesToDownload = await filterPreservedDownloads(
       await scan(modpackFiles.modpack),
@@ -241,8 +258,16 @@ export default class Launcher
       ...injectorFilesToDownload,
       ...loggingFilesToDownload
     ]
-    const report = { downloads: filesToDownload, downloadSize: filesToDownload.reduce((sum, file) => sum + (file.size ?? 0), 0), java: javaStatus }
+    const selected = new Set(filesToDownload)
+    const report: InstallationReport = {
+      downloads: filesToDownload,
+      downloadSize: filesToDownload.reduce((sum, file) => sum + (file.size ?? 0), 0),
+      java: javaStatus,
+      issues: [...issues.filter((issue) => selected.has(issue.file)), ...(mode === 'launch' ? [] : await loaderManager.inspect())]
+    }
+    if (options.diskSpace !== false) report.space = await diskSpace(this.config.root, report.downloadSize)
     if (mode === 'inspect') return report
+    if (report.space) requireSpace(report.space)
 
     //* Download
     checkCancellation()
@@ -327,8 +352,7 @@ export default class Launcher
     )
     const customAuth = argumentManager.getCustomArgs(injectorFiles)
     const args = argumentManager.getArgs([...loaderFiles.libraries, ...librariesFiles.libraries, ...loaderLibrariesFiles.libraries], customAuth)
-    const blindArgs = args.map((arg, i) => (i === args.findIndex((p) => p === '--accessToken') + 1 ? '**********' : arg))
-    this.emit('launch_debug', `Launching Minecraft with args: ${blindArgs.join(' ')}`)
+    this.emit('launch_debug', redactSecrets(`Launching Minecraft with args: ${args.join(' ')}`, this.config, args))
 
     await this.run(this.config.java.absolutePath.replace('${X}', minecraftManifest.javaVersion?.majorVersion.toString() ?? '8'), args)
     return report
@@ -337,6 +361,7 @@ export default class Launcher
   // @ts-ignore
   protected emit(eventName: any, ...args: any[]) {
     const eventNameStr = String(eventName)
+    if (typeof args[0] === 'string') args[0] = redactSecrets(args[0], this.config, this.launchArgs_)
 
     if (eventNameStr === 'launch_data' || eventNameStr.endsWith('_progress')) {
       // @ts-ignore
@@ -359,7 +384,7 @@ export default class Launcher
       message += `\n${args[0].message.stack || args[0].message.message}`
     }
 
-    this.launcherLogs_.push(`[${time}] [${level}]: ${message}`)
+    this.launcherLogs_.push(`[${time}] [${level}]: ${redactSecrets(message, this.config, this.launchArgs_)}`)
 
     if (this.launcherLogs_.length > 500) {
       this.launcherLogs_.shift()
@@ -425,6 +450,7 @@ export default class Launcher
   }
 
   protected warn(message: string) {
+    message = redactSecrets(message, this.config)
     const time = new Date().toTimeString().split(' ')[0]
     const logLine = `[${time}] [WARN]: ${message}`
     console.warn(message)

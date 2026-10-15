@@ -39,7 +39,7 @@ try {
   await writeFile(
     path.join(temporary, 'consumer.mts'),
     `
-import EML, { type Account, type Config, type IProfile, type OperationOptions, type DownloaderOptions, type InstallationReport, type JavaInfo, Downloader, KintareClient, EMLLibError, ErrorType } from 'eml-lib'
+import EML, { type Account, type Config, type IProfile, type OperationOptions, type DownloaderOptions, type InstallationReport, type JavaInfo, type FileIssue, type PreparationOptions, Downloader, KintareClient, EMLLibError, ErrorType, redactSecrets } from 'eml-lib'
 import DeepProfile from 'eml-lib/lib/profile/profile.js'
 import DeepDownloader from 'eml-lib/lib/utils/downloader.js'
 import index from 'eml-lib/index.js'
@@ -60,6 +60,12 @@ async function cancellationConsumers() {
   const inspected: InstallationReport = await launcher.inspect(operation)
   const repaired: InstallationReport = await launcher.repair(operation)
   const java: JavaInfo = await new EML.Java({ root: 'fixture' }).check('java', 21, operation)
+  const preparation: PreparationOptions = { ...operation, javaTimeoutMs: 1000, diskSpace: true }
+  await launcher.inspect(preparation)
+  await new EML.Java({ root: 'fixture' }).check('java', 21, { ...operation, timeoutMs: 1000 })
+  const issues: FileIssue[] = await downloader.inspect([])
+  const reason: FileIssue['reason'] | undefined = issues[0]?.reason
+  void [reason, inspected.issues, inspected.space?.requiredBytes, redactSecrets('token=fixture', launcher.config)]
   void [inspected.downloads, repaired.java.info, java.majorVersion, java.architecture]
   await new EML.Java({ root: 'fixture', minecraft: { version: '1.21.1' } }).download(operation)
   await new DeepDownloader('fixture', 'profile-token').download([])

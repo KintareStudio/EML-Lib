@@ -27,6 +27,15 @@ export interface DownloaderOptions extends DownloadOptions, HttpOptions {
   adminToolUrl?: string
 }
 
+export interface FileIssue {
+  file: File
+  reason: 'missing' | 'size_mismatch' | 'hash_mismatch'
+}
+export interface FileCheckOptions extends OperationOptions {
+  readOnly?: boolean
+  onIssue?: (issue: FileIssue) => void
+}
+
 export default class Downloader extends EventEmitter<DownloaderEvents> {
   private readonly dest: string
   private readonly http: HttpClient
@@ -114,31 +123,43 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
     }
   }
 
-  async getFilesToDownload(files: File[], options: OperationOptions & { readOnly?: boolean } = {}): Promise<File[]> {
+  async getFilesToDownload(files: File[], options: FileCheckOptions = {}): Promise<File[]> {
+    return (await this.checkFiles(files, options)).map((issue) => issue.file).filter((file) => Boolean(file.url))
+  }
+
+  inspect(files: File[], options: OperationOptions = {}): Promise<FileIssue[]> {
+    return this.checkFiles(files, { ...options, readOnly: true })
+  }
+
+  private async checkFiles(files: File[], options: FileCheckOptions): Promise<FileIssue[]> {
     const linked = linkedSignals([operationSignal(), this.options.signal, options.signal])
     try {
-      const result: File[] = []
+      const result: FileIssue[] = []
       for (const file of files) {
         checkCancellation(linked.signal)
         const target = this.filePath(file)
         if (!options.readOnly) await this.directory(file.type === 'FOLDER' ? target : path.dirname(target), linked.signal)
         if (file.type === 'FOLDER') continue
-        let needed = false
+        let reason: FileIssue['reason'] | undefined
         try {
           const info = await fs.lstat(target)
           if (info.isSymbolicLink() || !info.isFile()) throw new EMLLibError(ErrorType.FILE_ERROR, 'Download target is not a regular file.')
-          needed = file.size !== undefined && file.size !== info.size
-          if (!needed && file.sha1) {
+          if (file.size !== undefined && file.size !== info.size) reason = 'size_mismatch'
+          if (!reason && file.sha1) {
             const hash = createHash('sha1')
             for await (const chunk of createReadStream(target, { signal: linked.signal })) hash.update(chunk)
-            needed = hash.digest('hex') !== file.sha1.toLowerCase()
+            if (hash.digest('hex') !== file.sha1.toLowerCase()) reason = 'hash_mismatch'
           }
         } catch (error) {
           checkCancellation(linked.signal)
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-          needed = true
+          reason = 'missing'
         }
-        if (needed && file.url) result.push(file)
+        if (reason) {
+          const issue = { file, reason }
+          result.push(issue)
+          options.onIssue?.(issue)
+        }
       }
       checkCancellation(linked.signal)
       return result

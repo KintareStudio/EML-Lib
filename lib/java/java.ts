@@ -11,7 +11,7 @@ import path_ from 'node:path'
 import Downloader from '../utils/downloader.js'
 import utils from '../utils/utils.js'
 import { preparationProcess } from '../utils/preparation-process.js'
-import { OperationOptions, checkCancellation, withOperation } from '../utils/operation.js'
+import { OperationOptions, checkCancellation, linkedSignals, operationSignal, withOperation } from '../utils/operation.js'
 import { EMLLibError, ErrorType } from '../../types/errors.js'
 import { MinecraftManifest } from '../../types/manifest.js'
 import { ResolvedConfig } from '../../types/config.js'
@@ -23,6 +23,10 @@ export interface JavaInfo {
   majorVersion: number
   architecture: string
   vmName: string
+}
+
+export interface JavaCheckOptions extends OperationOptions {
+  timeoutMs?: number
 }
 
 export function parseJavaInfo(output: string): JavaInfo {
@@ -158,9 +162,14 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
   async check(
     absolutePath: string = path_.join(utils.getServerFolder(this.root), 'runtime', 'jre-${X}', 'bin', 'java'),
     majorVersion: number = 8,
-    options: OperationOptions = {}
+    options: JavaCheckOptions = {}
   ): Promise<JavaInfo> {
     return withOperation(options, async () => {
+      const timeoutMs = options.timeoutMs ?? 10_000
+      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 0xffffffff)
+        throw new EMLLibError(ErrorType.CONFIG_ERROR, 'Invalid Java check timeout.')
+      const deadline = AbortSignal.timeout(timeoutMs),
+        linked = linkedSignals([operationSignal(), deadline])
       let output = ''
       try {
         const code = await preparationProcess(
@@ -169,7 +178,8 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
           {},
           (chunk) => {
             output += chunk.toString()
-          }
+          },
+          linked.signal
         )
         checkCancellation()
         if (code !== 0) throw new EMLLibError(ErrorType.JAVA_ERROR, `Java exited with code ${code}`)
@@ -183,8 +193,11 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
         return res
       } catch (error) {
         checkCancellation()
+        if (deadline.aborted) throw new EMLLibError(ErrorType.JAVA_ERROR, `Java check timed out after ${timeoutMs} ms.`, { cause: error })
         if (error instanceof EMLLibError) throw error
         throw new EMLLibError(ErrorType.JAVA_ERROR, `Java is not correctly installed: ${error instanceof Error ? error.message : error}`)
+      } finally {
+        linked.dispose()
       }
     })
   }

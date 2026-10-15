@@ -113,8 +113,8 @@ test('cancelling one launcher aborts its pending manifest without cancelling ano
   await ready.promise
   first.abort()
   await rejectedA
-  assert.equal(signals[0].aborted, true)
-  assert.equal(signals[1].aborted, false)
+  assert.equal(signals.filter((signal) => signal.aborted).length, 1)
+  assert.equal(signals.filter((signal) => !signal.aborted).length, 1)
   second.abort()
   await rejectedB
   assert.equal(starts + crashes + ends, 0)

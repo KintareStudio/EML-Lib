@@ -104,6 +104,7 @@
     "dist/types/*.js.map",
     "docs/upstream-comparison.es.md",
     "docs/reliable-downloads.es.md",
-    "docs/instance-repair.es.md"
+    "docs/instance-repair.es.md",
+    "docs/diagnostics-integrity.es.md"
   ]
 }

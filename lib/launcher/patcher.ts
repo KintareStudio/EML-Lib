@@ -15,6 +15,7 @@ import { checkCancellation } from '../utils/operation.js'
 import { EMLLibError, ErrorType } from '../../types/errors.js'
 import EventEmitter from '../utils/events.js'
 import { PatcherEvents } from '../../types/events.js'
+import Downloader, { FileIssue } from '../utils/downloader.js'
 
 export default class Patcher extends EventEmitter<PatcherEvents> {
   private readonly config: ResolvedConfig
@@ -52,17 +53,18 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
     for (const processor of processors) {
       checkCancellation()
       if (processor?.sides && !processor.sides.includes('client')) continue
+      const outputs = this.outputFiles(processor)
+      if (outputs.length && !(await new Downloader(this.config.root).inspect(outputs)).length) continue
 
       const jarExtractPathName = path_.join(this.config.root, 'libraries', utils.getLibraryPath(processor.jar), utils.getLibraryName(processor.jar))
-      const args = (processor.args as string[]).map((arg) => this.mapPath(this.mapArg(arg)))
-      const classpath = (processor.classpath as string[]).map(
+      const args = ((processor.args ?? []) as string[]).map((arg) => this.mapPath(this.mapArg(arg)))
+      const classpath = ((processor.classpath ?? []) as string[]).map(
         (cp) => `"${path_.join(this.config.root, 'libraries', utils.getLibraryPath(cp), utils.getLibraryName(cp))}"`
       )
       const mainClass = await this.getJarMain(jarExtractPathName)
 
       if (!mainClass) {
-        console.warn(`[Patcher] Could not find Main-Class for processor ${processor.jar}`)
-        continue
+        throw new EMLLibError(ErrorType.PATCHER_ERROR, `Could not find Main-Class for processor ${processor.jar}`)
       }
 
       const code = await preparationProcess(
@@ -73,19 +75,25 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
       )
       checkCancellation()
       if (code !== 0) throw new EMLLibError(ErrorType.PATCHER_ERROR, `Loader processor failed with exit code ${code}`)
+      if ((await new Downloader(this.config.root).inspect(outputs)).length)
+        throw new EMLLibError(ErrorType.PATCHER_ERROR, `Loader processor produced missing or corrupt output: ${processor.jar}`)
       this.emit('patch_progress', { filename: utils.getLibraryName(processor.jar) })
       i++
     }
 
     checkCancellation()
-    await fs.unlink(incomplete)
     const resultAfterPatch = await this.isPatched()
+    if (this.declaredFiles().length && resultAfterPatch.issues.length)
+      throw new EMLLibError(ErrorType.PATCHER_ERROR, 'Loader outputs failed their final integrity check.')
+    await fs.unlink(incomplete)
     this.emit('patch_end', { amount: i })
 
     return resultAfterPatch.files
   }
 
   private async isPatched() {
+    const declared = this.declaredFiles()
+    if (declared.length) return this.checkOutputs(declared)
     const processors = this.installProfile.processors
 
     let libraries: string[] = []
@@ -93,9 +101,9 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
     processors?.forEach((processor: any) => {
       if (processor?.sides && !processor.sides.includes('client')) return
 
-      processor.args.forEach((arg: string) => {
+      ;(processor.args ?? []).forEach((arg: string) => {
         arg = arg.replace(/[{}]/g, '')
-        if (this.installProfile.data[arg]) {
+        if (this.installProfile.data?.[arg]) {
           if (arg === 'BINPATCH') return
 
           const entry = this.installProfile.data[arg]
@@ -108,26 +116,41 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
 
     libraries = [...new Set(libraries)]
 
-    const promises = libraries.map(async (lib) => {
+    const files = libraries.map((lib) => {
       const cleanLib = lib.replace('[', '').replace(']', '')
       const libName = utils.getLibraryName(cleanLib)
       const libPath = utils.getLibraryPath(cleanLib)
-      const libExtractPath = path_.join(this.config.root, 'libraries', libPath)
-      const fileObj = { name: libName, path: path_.join('libraries', libPath), url: '', type: 'LIBRARY' }
-
-      try {
-        await fs.access(path_.join(libExtractPath, libName))
-        return { patched: true, file: fileObj }
-      } catch {
-        return { patched: false, file: fileObj }
-      }
+      return { name: libName, path: path_.join('libraries', libPath), url: '', type: 'LIBRARY' as const }
     })
+    return this.checkOutputs(files)
+  }
 
-    const result = await Promise.all(promises)
-    const patched = !existsSync(path_.join(this.config.root, '.eml-patch-incomplete')) && result.length > 0 && result.every((c) => c.patched)
-    const files = result.map((c) => c.file as File)
+  async inspect(): Promise<FileIssue[]> {
+    return (await this.isPatched()).issues
+  }
 
-    return { patched, files }
+  private async checkOutputs(files: File[]) {
+    const issues = await new Downloader(this.config.root).inspect(files)
+    return { patched: !existsSync(path_.join(this.config.root, '.eml-patch-incomplete')) && files.length > 0 && !issues.length, files, issues }
+  }
+
+  private declaredFiles(): File[] {
+    const files = (this.installProfile.processors ?? [])
+      .filter((p: any) => !p.sides || p.sides.includes('client'))
+      .flatMap((p: any) => this.outputFiles(p)) as File[]
+    return [...new Map(files.map((file) => [path_.join(file.path, file.name), file])).values()]
+  }
+
+  private outputFiles(processor: any): File[] {
+    return Object.entries(processor.outputs ?? {}).map(([key, value]) => {
+      const literal = (value: string) => this.mapArg(value.replace(/^['"]|['"]$/g, '')).replace(/^['"]|['"]$/g, '')
+      const artifact = literal(key),
+        sha1 = literal(String(value))
+      if (!/^\[[^\]]+\]$/.test(artifact) || !/^[a-f0-9]{40}$/i.test(sha1))
+        throw new EMLLibError(ErrorType.PATCHER_ERROR, 'Invalid loader output artifact or SHA-1.')
+      const name = artifact.slice(1, -1)
+      return { name: utils.getLibraryName(name), path: utils.getLibraryPath(name, 'libraries'), url: '', sha1, type: 'LIBRARY' }
+    })
   }
 
   private async getJarMain(jarPath: string): Promise<string | null> {
@@ -153,12 +176,12 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
     const loader = this.config.minecraft.loader!
     const argType = arg.replace(/[{}]/g, '')
 
-    const universalMaven = this.installProfile.libraries.find((v: any) => {
+    const universalMaven = (this.installProfile.libraries ?? []).find((v: any) => {
       if (loader.loader === 'forge') return v.name.startsWith('net.minecraftforge:forge')
       if (loader.loader === 'neoforge') return v.name.startsWith('net.neoforged:neoforge')
     })
 
-    if (this.installProfile.data[argType]) {
+    if (this.installProfile.data?.[argType]) {
       if (argType === 'BINPATCH') {
         const clientDataName = utils.getLibraryName(this.installProfile.path ?? universalMaven.name).replace(/\.jar$/, '-clientdata.lzma')
         const clientDataExtractPath = utils.getLibraryPath(this.installProfile.path ?? universalMaven.name, this.config.root, 'libraries')
