@@ -27,7 +27,7 @@ try {
       dependencies: { 'eml-lib': `file:${path.join(temporary, archive.filename).replaceAll('\\', '/')}` }
     })
   )
-  run([npm, 'install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], temporary)
+  run([npm, 'install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund'], temporary)
   run(
     [
       '--input-type=module',
