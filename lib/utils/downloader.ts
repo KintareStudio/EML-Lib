@@ -1,3 +1,4 @@
+import { httpFetch as fetch, httpError } from '../http/http.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -85,7 +86,11 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
       const relative = path_.relative(this.dest, filePath)
       const isSafe = relative && !relative.startsWith('..') && !path_.isAbsolute(relative)
       if (!isSafe) {
-        this.emit('download_error', { filename: file.name, type: file.type, message: 'Unsafe file path detected, skipping.' })
+        this.emit('download_error', {
+          filename: file.name,
+          type: file.type,
+          message: 'Unsafe file path detected, skipping.'
+        })
         return
       }
 
@@ -122,7 +127,12 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
       await this.downloadFile(file)
       this.downloaded.amount++
     } catch (err: any) {
-      if (err instanceof EMLLibError && err.code === ErrorType.AUTH_ERROR) {
+      if (
+        err instanceof EMLLibError &&
+        (err.code === ErrorType.AUTH_ERROR ||
+          err.code === ErrorType.TOO_MANY_REQUESTS ||
+          (err.status !== undefined && err.status >= 400 && err.status < 500 && err.status !== 408))
+      ) {
         this.emit('download_error', { filename: file.name, type: file.type, message: err.message })
         throw err
       }
@@ -130,7 +140,11 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
         return this.downloadFileWithRetry(file, attempt + 1)
       } else {
-        this.emit('download_error', { filename: file.name, type: file.type, message: err.message ?? err })
+        this.emit('download_error', {
+          filename: file.name,
+          type: file.type,
+          message: err.message ?? err
+        })
         throw new EMLLibError(ErrorType.DOWNLOAD_ERROR, `Failed to download ${file.name} after 5 attempts`)
       }
     }
@@ -143,18 +157,17 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
 
     await fs.mkdir(dirPath, { recursive: true })
 
-    const headers: HeadersInit = this.token && file.url.includes('files/files-updater') // do not send the token to unknown urls, only to the files-updater endpoint
-      ? { Authorization: `Bearer ${this.token}`, Accept: 'application/octet-stream' }
-      : { Accept: 'application/octet-stream' }
-    const req = await fetch(file.url, { headers })
+    const headers: HeadersInit =
+      this.token && file.url.includes('files/files-updater') // do not send the token to unknown urls, only to the files-updater endpoint
+        ? { Authorization: `Bearer ${this.token}`, Accept: 'application/octet-stream' }
+        : { Accept: 'application/octet-stream' }
+    const req = await fetch(file.url, { headers, signal: AbortSignal.timeout(15 * 60_000) })
 
-    if (!req.ok || !req.body) {
-      const errorText = await req.text()
-      if (req.status === 401 || req.status === 403) {
-        throw new EMLLibError(ErrorType.AUTH_ERROR, `Authentication rejected for ${file.name}: HTTP ${req.status} ${errorText}`)
-      }
-      throw new EMLLibError(ErrorType.FETCH_ERROR, `Error while fetching ${file.name}: HTTP ${req.status} ${errorText}`)
-    }
+    if (!req.ok) throw await httpError(req, `Error while fetching ${file.name}`)
+    if (!req.body)
+      throw new EMLLibError(ErrorType.FETCH_ERROR, `Empty response while fetching ${file.name}`, {
+        status: req.status
+      })
 
     const fileStream = fsSync.createWriteStream(filePath)
     const nodeStream = Readable.fromWeb(req.body as any)
@@ -221,4 +234,3 @@ export default class Downloader extends EventEmitter<DownloaderEvents> {
     }
   }
 }
-

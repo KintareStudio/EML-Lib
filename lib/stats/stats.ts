@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 import { AuthEvents, BootstrapEvents, LauncherEvents } from '../../index.js'
 import { EMLLibError, ErrorType } from '../../types/errors.js'
 import { IStatProvider, StatEvent } from '../../types/stats.js'

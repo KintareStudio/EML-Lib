@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -153,25 +154,60 @@ class Utils {
   }
 
   /**
+   * Check if a single rule matches the current environment.
+   * @param rule The rule to check.
+   * @param features The feature flags to match against `rule.features` (unset features are `false`).
+   * @returns `true` if every condition of the rule is satisfied.
+   */
+  private doesRuleMatch(rule: any, features: Record<string, boolean>): boolean {
+    if (!rule || typeof rule !== 'object') return false
+
+    if (rule.os) {
+      if (rule.os.name && rule.os.name !== this.getOS_MCCode()) return false
+      if (rule.os.arch && rule.os.arch !== this.getArch_MCCode()) return false
+      if (rule.os.version) {
+        try {
+          if (!new RegExp(rule.os.version).test(this.getOSVersion())) return false
+        } catch {
+          return false
+        }
+      }
+    }
+
+    if (rule.features) {
+      for (const [feature, expected] of Object.entries(rule.features)) {
+        if ((features[feature] ?? false) !== expected) return false
+      }
+    }
+
+    return true
+  }
+
+  /**
+   * Evaluate a Mojang rule list. Rules are applied in order and the last matching one wins; if
+   * rules are present but none of them match, the item is denied.
+   * @param rules The rules to evaluate.
+   * @param features The feature flags to match against (unset features are `false`).
+   * @returns `true` if the item is allowed for the current environment.
+   */
+  private evaluateRules(rules: any, features: Record<string, boolean> = {}): boolean {
+    if (!Array.isArray(rules) || rules.length === 0) return true
+
+    let allowed = false
+    for (const rule of rules) {
+      if (!this.doesRuleMatch(rule, features)) continue
+      allowed = rule.action !== 'disallow'
+    }
+    return allowed
+  }
+
+  /**
    * Check if a library is allowed for the current operating system.
    * @param lib The library to check.
    * @returns `true` if the library is allowed, `false` otherwise.
    */
   isLibAllowed(lib: any): boolean {
-    if (lib.rules) {
-      if (lib.rules.length > 1) {
-        if (lib.rules[0].action === 'allow' && lib.rules[1].action === 'disallow') {
-          return lib.rules[1].os.name !== this.getOS_MCCode()
-        }
-        return false
-      } else {
-        if (lib.rules[0].action === 'allow' && lib.rules[0].os) {
-          return lib.rules[0].os.name === this.getOS_MCCode()
-        }
-        return true
-      }
-    }
-    return true
+    return this.evaluateRules(lib?.rules)
   }
 
   /**
@@ -180,28 +216,7 @@ class Utils {
    * @returns `true` if the argument is allowed, `false` otherwise.
    */
   isArgAllowed(arg: any): boolean {
-    if (arg.rules) {
-      if (arg.rules.length > 1) {
-        if (arg.rules[0].action === 'allow' && arg.rules[1].action === 'disallow') {
-          if (arg.rules[1].os.name) return arg.rules[1].os.name !== this.getOS_MCCode()
-          if (arg.rules[1].os.arch) return arg.rules[1].os.arch !== this.getArch_MCCode()
-        }
-        return false
-      } else {
-        if (arg.rules[0].action === 'allow' && arg.rules[0].os) {
-          if (arg.rules[0].os.name) {
-            if (arg.rules[0].os.name === this.getOS_MCCode() && arg.rules[0].os.version) return +this.getOSVersion().split('.')[0] >= 10
-            return arg.rules[0].os.name === this.getOS_MCCode()
-          }
-          if (arg.rules[0].os.arch) return arg.rules[0].os.arch === this.getArch_MCCode()
-          return arg.rules[0].os.name === this.getOS_MCCode()
-        } else if (arg.rules[0].action === 'allow' && arg.rules[0].features) {
-          return false
-        }
-        return true
-      }
-    }
-    return true
+    return this.evaluateRules(arg?.rules)
   }
 
   /**
@@ -431,4 +446,3 @@ class Utils {
 }
 
 export default new Utils()
-

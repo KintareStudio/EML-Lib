@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -12,8 +13,10 @@ import { spawn } from 'node:child_process'
 const gzip = promisify(zlib.gzip)
 
 export default class CrashReport {
+  private static readonly attempts = new Map<string, number>()
   private readonly url: string
   private token: string | null = null
+  private readonly cooldownMs: number
 
   /**
    * Send game crash reports to EML AdminTool. Ensure to initialize this class only **once** in
@@ -38,8 +41,15 @@ export default class CrashReport {
    *
    * @param url The URL of your EML AdminTool website.
    */
-  constructor(url: string) {
+  constructor(url: string, options: { cooldownMs?: number } = {}) {
     this.url = `${url}/api`
+    this.cooldownMs = Math.max(0, options.cooldownMs ?? 0)
+  }
+
+  /** Check before requesting consent; one failed attempt also holds the cooldown. */
+  canSend(now = Date.now()): boolean {
+    const previous = CrashReport.attempts.get(this.url)
+    return this.cooldownMs === 0 || previous === undefined || now - previous >= this.cooldownMs
   }
 
   /**
@@ -50,6 +60,8 @@ export default class CrashReport {
    * @param crashData The crash data emited by the `launch_crash` event of the Launcher.
    */
   async send(launcher: Launcher, crashData: CrashData): Promise<void> {
+    if (!this.canSend()) throw new EMLLibError(ErrorType.TOO_MANY_REQUESTS, 'Crash report cooldown is active.', { status: 429 })
+    CrashReport.attempts.set(this.url, Date.now())
     try {
       const logs = await this.readLogs(launcher, crashData)
       const sanLauncherLogs = this.sanitizeText(logs.launcherLogs, launcher)
@@ -85,7 +97,10 @@ ${sanLatestLog}
           version: launcher.config.minecraft.version ?? 'unknown',
           loader: launcher.config.minecraft.loader?.loader ?? 'vanilla',
           loaderVersion: launcher.config.minecraft.loader?.version ?? '',
-          authType: launcher.config.account.meta.type ?? 'crack',
+          // `reportType` wins when a provider declares one: `type` is launch-critical (it drives
+          // `${user_type}` and the authlib injector), so providers that have to masquerade at
+          // launch time — Kintare launches as 'msa' — still get reported as what they actually are.
+          authType: launcher.config.account.meta.reportType ?? launcher.config.account.meta.type ?? 'crack',
           minRam: launcher.config.memory.min ?? null,
           maxRam: launcher.config.memory.max ?? null,
           exitCode: crashData.code
@@ -182,6 +197,7 @@ ${sanLatestLog}
     const userDirname = os.userInfo().homedir.replaceAll('\\', '/').split('/').pop()
     const pseudo = launcher.config.account.name
     const uuid = launcher.config.account.uuid
+    const displayName = launcher.config.account.displayName
 
     const sensitiveStrings: { target: string; mask: string }[] = []
 
@@ -189,6 +205,10 @@ ${sanLatestLog}
     if (userDirname && userDirname.length > 1) sensitiveStrings.push({ target: userDirname, mask: '<USER>' })
     if (pseudo && pseudo.length > 1) sensitiveStrings.push({ target: pseudo, mask: '<PSEUDO>' })
     if (uuid && uuid.length > 1) sensitiveStrings.push({ target: uuid, mask: '<UUID>' })
+    // `displayName` is resolved from the OIDC token's claims and falls back to the `email` claim,
+    // so it can be a literal email address — the one directly identifying value the masks above
+    // would otherwise miss, since it is distinct from `account.name`.
+    if (displayName && displayName.length > 1) sensitiveStrings.push({ target: displayName, mask: '<PSEUDO>' })
 
     const sensitiveKeys = ['--accessToken', '--uuid', '--clientId']
     for (const key of sensitiveKeys) {
@@ -205,7 +225,16 @@ ${sanLatestLog}
       cleaned = cleaned.replace(new RegExp(escapedTarget, 'gi'), mask)
     }
 
+    // Emails first: an address containing the pseudo/displayName would otherwise be left as a
+    // half-masked fragment like `<PSEUDO>@mail.com`, which still identifies the domain and shape.
+    cleaned = cleaned.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '<EMAIL>')
     cleaned = cleaned.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<IP>')
+    // IPv6. Deliberately conservative: it requires at least four hextets, so a `12:34:56` log
+    // timestamp (three) is left alone — matching those would corrupt essentially every line of a
+    // Minecraft log. `::1` and the IPv4-mapped form are listed explicitly rather than by
+    // generalising the compressed `::` syntax, which would also swallow Java method references
+    // like `Foo::bar`. The surrounding guards stop it biting into longer words.
+    cleaned = cleaned.replace(/(?<![\w:])(?:(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}|::1|::ffff:(?:\d{1,3}\.){3}\d{1,3})(?![\w:])/gi, '<IP>')
     cleaned = cleaned.replace(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '<JWT>')
 
     return cleaned

@@ -15,6 +15,10 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
   public readonly statType: StatProvider = 'BOOTSTRAP'
   private readonly url: string
   private autoUpdater: AppUpdater | undefined
+  private updaterInFlight?: Promise<AppUpdater>
+  private checkInFlight?: Promise<IBootstrap>
+  private downloadInFlight?: Promise<string>
+  private installInFlight?: Promise<void>
 
   /**
    * Update the launcher.
@@ -35,7 +39,15 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
    * Check for updates.
    * @returns The update result object if an update is available, null otherwise.
    */
-  async checkForUpdate(): Promise<IBootstrap> {
+  checkForUpdate(): Promise<IBootstrap> {
+    if (this.checkInFlight) return this.checkInFlight
+    this.checkInFlight = this.checkUpdate().finally(() => {
+      this.checkInFlight = undefined
+    })
+    return this.checkInFlight
+  }
+
+  private async checkUpdate(): Promise<IBootstrap> {
     try {
       const updater = await this.getUpdater()
       const result = await updater.checkForUpdates()
@@ -68,7 +80,15 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
    * Download the update found by `checkForUpdate()`.
    * @returns The path to the downloaded update.
    */
-  async download(): Promise<string> {
+  download(): Promise<string> {
+    if (this.downloadInFlight) return this.downloadInFlight
+    this.downloadInFlight = this.downloadUpdate().finally(() => {
+      this.downloadInFlight = undefined
+    })
+    return this.downloadInFlight
+  }
+
+  private async downloadUpdate(): Promise<string> {
     try {
       const updater = await this.getUpdater()
       const downloadedFiles = await updater.downloadUpdate()
@@ -82,13 +102,21 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
 
   /**
    * Quit the application and install the update.
-   * 
+   *
    * You should only call this method after `checkForUpdate()` has found an update and `download()`
    * has successfully downloaded it. Otherwise, this method may not work as expected.
-   * 
+   *
    * @param silent [Optional: default if `false`] (Windows-only) Runs the installer in silent mode.
    */
-  async runUpdate(silent = false): Promise<void> {
+  runUpdate(silent = false): Promise<void> {
+    if (this.installInFlight) return this.installInFlight
+    this.installInFlight = this.installUpdate(silent).finally(() => {
+      this.installInFlight = undefined
+    })
+    return this.installInFlight
+  }
+
+  private async installUpdate(silent: boolean): Promise<void> {
     try {
       const updater = await this.getUpdater()
       const update = await this.checkForUpdate()
@@ -96,7 +124,10 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
         console.warn('No update available. Aborting update process.')
         return
       }
-      this.emit('bootstrap_update', { current: updater.currentVersion.version, latest: update.latestVersion })
+      this.emit('bootstrap_update', {
+        current: updater.currentVersion.version,
+        latest: update.latestVersion
+      })
       updater.quitAndInstall(silent, true)
     } catch (err: any) {
       if (err instanceof EMLLibError) throw err
@@ -104,9 +135,17 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
     }
   }
 
-  private async getUpdater() {
-    if (this.autoUpdater) return this.autoUpdater
+  private getUpdater(): Promise<AppUpdater> {
+    if (this.autoUpdater) return Promise.resolve(this.autoUpdater)
+    if (!this.updaterInFlight) {
+      this.updaterInFlight = this.initializeUpdater().finally(() => {
+        this.updaterInFlight = undefined
+      })
+    }
+    return this.updaterInFlight
+  }
 
+  private async initializeUpdater(): Promise<AppUpdater> {
     try {
       const module = await import('electron-updater')
       this.autoUpdater = module.autoUpdater
@@ -142,4 +181,3 @@ export default class Bootstrap extends EventEmitter<DownloaderEvents & Bootstrap
     return this.autoUpdater
   }
 }
-

@@ -195,6 +195,11 @@ export interface Config {
      * A list of relative paths or files to protect from the cleaning process.
      */
     ignored?: string[]
+    /** Defaults to upstream's replacement behavior. Use 'extend' to retain the default protections. */
+    ignoredMode?: 'extend' | 'replace'
+    additionalIgnored?: string[]
+    /** Existing files under these paths are never overwritten by modpack downloads. Opt-in. */
+    preserveExisting?: string[]
   }
 
   /**
@@ -301,6 +306,7 @@ export interface ResolvedConfig {
   cleaning: {
     enabled: boolean
     ignored: string[]
+    preserveExisting?: string[]
   }
   account: Account
   java: {
@@ -318,4 +324,3 @@ export interface ResolvedConfig {
     max: number
   }
 }
-

@@ -40,7 +40,7 @@ export default class Cleaner extends EventEmitter<CleanerEvents> {
     for (const file of browsed) {
       const fullPath = path_.resolve('/', file.path, file.name).replace(/\\/g, '/')
       const isFileValid = validFilesSet.has(fullPath)
-      const isIgnored = ignoredPaths.some((ig) => fullPath.startsWith(ig.replace(/\\/g, '/')) || fullPath.startsWith(ig))
+      const isIgnored = ignoredPaths.some((ig) => fullPath === ig.replace(/\\/g, '/') || fullPath.startsWith(`${ig.replace(/\\/g, '/')}/`))
       if (!isFileValid && !isIgnored) {
         deletePromises.push(
           fs
@@ -70,7 +70,8 @@ export default class Cleaner extends EventEmitter<CleanerEvents> {
 
     const promises = files.map(async (file) => {
       const fullPath = path_.join(dir, file)
-      const stats = await fs.stat(fullPath)
+      const stats = await fs.lstat(fullPath)
+      if (stats.isSymbolicLink()) return
 
       if (stats.isDirectory()) {
         await this.browse(fullPath, browsed)
@@ -85,4 +86,3 @@ export default class Cleaner extends EventEmitter<CleanerEvents> {
     await Promise.all(promises)
   }
 }
-

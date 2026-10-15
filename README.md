@@ -1,3 +1,19 @@
+# Kintare EML-Lib soft fork
+
+This is a soft fork of [Electron-Minecraft-Launcher/EML-Lib](https://github.com/Electron-Minecraft-Launcher/EML-Lib), based on upstream **v2.7.3**. It preserves the upstream API and works with the official **EML AdminTool**. Kintare authentication is optional; existing Microsoft, Yggdrasil, Azuriom and offline launchers do not need to configure Kintare.
+
+The fork adds optional Kintare OIDC/wardrobe clients, a GitHub Releases agent cache, injectable HTTP transport, protected-profile access coordination, launch configuration helpers and reliability fixes. It does not require an AdminTool fork or new AdminTool endpoints.
+
+- [Upstream comparison and compatibility notes](docs/upstream-comparison.es.md)
+- [Kintare integration](docs/kintare-client.es.md)
+- Build: `npm ci` followed by `npm run build`.
+- Offline tests: `npm run test:unit`. The upstream `npm test` remains an interactive Minecraft demonstration.
+- The package is named `@kintare/eml-lib`; an existing application may retain its `eml-lib` import name by using an npm package alias when consuming a published package.
+
+Original upstream documentation and attribution follow.
+
+---
+
 # EML Lib
 
 **Electron Minecraft Launcher Lib (EML Lib) is a Node.js library. It permits to authenticate, download Java and Minecraft and launch Minecraft.**

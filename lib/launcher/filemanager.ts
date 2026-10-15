@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -116,6 +117,8 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
     }
 
     for (const lib of this.minecraftManifest.libraries) {
+      if (!utils.isLibAllowed(lib)) continue
+
       let type: 'LIBRARY' | 'NATIVE'
       let artifact: Artifact | undefined
 
@@ -125,7 +128,6 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
         if (!artifact) continue
         // if (artifact.path && artifact.path.includes('/3.3.1/')) type = 'LIBRARY'
       } else {
-        if (!utils.isLibAllowed(lib)) continue
         type = 'LIBRARY'
         artifact = await this.patchLibrary(lib)
       }
@@ -318,13 +320,14 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
   async extractNatives(libraries: File[]): Promise<{ files: File[] }> {
     const natives = libraries.filter((lib) => lib.type === 'NATIVE')
     const nativesFolder = path_.resolve(this.config.root, 'bin', this.minecraftManifest.id)
+    const claimedBy = new Map<string, string>()
     let files: File[] = []
 
     if (!existsSync(nativesFolder)) {
       await fs.mkdir(nativesFolder, { recursive: true })
     }
 
-    const promises = natives.map((native) => {
+    const extract = (native: File) => {
       return new Promise<void>((resolve, reject) => {
         const zipPath = path_.join(this.config.root, native.path, native.name)
         if (!existsSync(zipPath)) return resolve()
@@ -348,6 +351,21 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
             if (!isSafe || !entryName) {
               console.warn(`[Security] Skipped unsafe native extraction: ${entry.fileName}`)
               return zipfile.readEntry()
+            }
+
+            // Two archives can declare the same entry (e.g. several LWJGL versions all shipping
+            // `lwjgl64.dll`). Keeping the first one makes the result deterministic instead of
+            // depending on which archive happens to finish last.
+            if (!entry.fileName.endsWith('/')) {
+              const claimKey = utils.getOS() === 'win' ? entryPath.toLowerCase() : entryPath
+              const owner = claimedBy.get(claimKey)
+
+              if (owner) {
+                console.warn(`[Natives] ${path_.basename(entryName)} was already extracted from ${owner}, skipping the one in ${native.name}`)
+                return zipfile.readEntry()
+              }
+
+              claimedBy.set(claimKey, native.name)
             }
 
             const tmpFile = {
@@ -393,9 +411,13 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
           zipfile.on('error', reject)
         })
       })
-    })
+    }
 
-    await Promise.all(promises)
+    // Extracted one archive at a time: two archives writing the same file concurrently can
+    // interleave and produce a corrupted native library.
+    for (const native of natives) {
+      await extract(native)
+    }
 
     this.emit('extract_end', { amount: files.length })
 
@@ -480,6 +502,10 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
       let type: 'LIBRARY' | 'NATIVE' = 'LIBRARY'
 
       if (loader.loader.toLocaleLowerCase() === 'forge' || loader.loader.toLocaleLowerCase() === 'neoforge') {
+        // Rules apply to every library, natives included: a library that ships natives must not
+        // bypass its own OS rules (otherwise e.g. both LWJGL sets of Minecraft 1.8 get extracted).
+        if (!utils.isLibAllowed(lib)) return null
+
         if (lib.natives) {
           type = 'NATIVE'
           native = lib.natives[os]
@@ -489,7 +515,7 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
           if (patch !== undefined) artifact = patch
           if (artifact && !artifact.path) name = name.replace('.jar', `-${native}.jar`)
         } else {
-          if (!utils.isLibAllowed(lib) || (!lib.serverreq && !lib.clientreq && !lib.url && !lib.downloads)) return null
+          if (!lib.serverreq && !lib.clientreq && !lib.url && !lib.downloads) return null
           const patch = this.checkPatch(lib.name!, 'LIBRARY')
           if (patch === null) return null
           if (patch !== undefined) artifact = patch
@@ -646,4 +672,3 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
     return undefined
   }
 }
-

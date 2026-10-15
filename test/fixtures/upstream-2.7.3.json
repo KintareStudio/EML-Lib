@@ -1,0 +1,534 @@
+{
+  "repository": "Electron-Minecraft-Launcher/EML-Lib",
+  "commit": "1350114806500481003dbd7c1ff323b0cb79ae4f",
+  "version": "2.7.3",
+  "named": [
+    "AzAuth",
+    "Background",
+    "Bootstrap",
+    "Bootstraps",
+    "CrackAuth",
+    "CrashReport",
+    "Java",
+    "Launcher",
+    "Maintenance",
+    "MicrosoftAuth",
+    "News",
+    "Profile",
+    "Profiles",
+    "ServerStatus",
+    "Skin",
+    "Stats",
+    "YggdrasilAuth"
+  ],
+  "default": [
+    "MicrosoftAuth",
+    "YggdrasilAuth",
+    "AzAuth",
+    "CrackAuth",
+    "Skin",
+    "Bootstraps",
+    "Bootstrap",
+    "Maintenance",
+    "News",
+    "Background",
+    "Profiles",
+    "Profile",
+    "ServerStatus",
+    "Java",
+    "Launcher",
+    "Stats",
+    "CrashReport"
+  ],
+  "classes": {
+    "AzAuth": [
+      {
+        "name": "auth",
+        "kind": "method",
+        "signatures": [
+          "(username: string, password: string, twoFACode?: string | undefined): Promise<Account>"
+        ]
+      },
+      {
+        "name": "verify",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<Account>"
+        ]
+      },
+      {
+        "name": "logout",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<void>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: K | keyof AuthEvents, listener: K extends keyof AuthEvents ? AuthEvents[K] extends unknown[] ? (...args: AuthEvents[K]) => void : never : never): AzAuth"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<AuthEvents & U>): void"
+        ]
+      }
+    ],
+    "Background": [
+      {
+        "name": "getBackground",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<IBackground | null>"
+        ]
+      }
+    ],
+    "Bootstrap": [
+      {
+        "name": "checkForUpdate",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<IBootstrap>"
+        ]
+      },
+      {
+        "name": "download",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<string>"
+        ]
+      },
+      {
+        "name": "runUpdate",
+        "kind": "method",
+        "signatures": [
+          "(silent?: boolean): Promise<void>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: K | keyof DownloaderEvents | keyof BootstrapEvents, listener: K extends keyof DownloaderEvents | keyof BootstrapEvents ? (DownloaderEvents & BootstrapEvents)[K] extends unknown[] ? (...args: (DownloaderEvents & BootstrapEvents)[K]) => void : never : never): Bootstrap"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<DownloaderEvents & BootstrapEvents & U>): void"
+        ]
+      }
+    ],
+    "Bootstraps": [
+      {
+        "name": "checkForUpdate",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<IBootstrap>"
+        ]
+      },
+      {
+        "name": "download",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<string>"
+        ]
+      },
+      {
+        "name": "runUpdate",
+        "kind": "method",
+        "signatures": [
+          "(silent?: boolean): Promise<void>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: K | keyof DownloaderEvents | keyof BootstrapEvents, listener: K extends keyof DownloaderEvents | keyof BootstrapEvents ? (DownloaderEvents & BootstrapEvents)[K] extends unknown[] ? (...args: (DownloaderEvents & BootstrapEvents)[K]) => void : never : never): Bootstrap"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<DownloaderEvents & BootstrapEvents & U>): void"
+        ]
+      }
+    ],
+    "CrackAuth": [
+      {
+        "name": "auth",
+        "kind": "method",
+        "signatures": [
+          "(username: string): Account"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: keyof AuthEvents | K, listener: K extends keyof AuthEvents ? AuthEvents[K] extends unknown[] ? (...args: AuthEvents[K]) => void : never : never): CrackAuth"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<AuthEvents & U>): void"
+        ]
+      }
+    ],
+    "CrashReport": [
+      {
+        "name": "send",
+        "kind": "method",
+        "signatures": [
+          "(launcher: Launcher, crashData: CrashData): Promise<void>"
+        ]
+      }
+    ],
+    "Java": [
+      {
+        "name": "getFiles",
+        "kind": "method",
+        "signatures": [
+          "(manifest?: MinecraftManifest | undefined): Promise<File[]>"
+        ]
+      },
+      {
+        "name": "download",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<void>"
+        ]
+      },
+      {
+        "name": "check",
+        "kind": "method",
+        "signatures": [
+          "(absolutePath?: string, majorVersion?: number): Promise<{ version: string; arch: \"64-bit\" | \"32-bit\"; }>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: keyof DownloaderEvents | K | \"java_info\", listener: K extends keyof DownloaderEvents | \"java_info\" ? (DownloaderEvents & JavaEvents)[K] extends unknown[] ? (...args: (DownloaderEvents & JavaEvents)[K]) => void : never : never): Java"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<DownloaderEvents & JavaEvents & U>): void"
+        ]
+      }
+    ],
+    "Launcher": [
+      {
+        "name": "launchArgs",
+        "kind": "getter",
+        "signatures": []
+      },
+      {
+        "name": "launcherLogs",
+        "kind": "getter",
+        "signatures": []
+      },
+      {
+        "name": "launch",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<void>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: keyof DownloaderEvents | \"java_info\" | K | keyof LauncherEvents | keyof CleanerEvents | keyof FileManagerEvents | keyof PatcherEvents, listener: K extends keyof DownloaderEvents | ... 4 more ... | keyof PatcherEvents ? (LauncherEvents & ... 4 more ... & PatcherEvents)[K] extends unknown[] ? (...args: (LauncherEvents & ... 4 more ... & PatcherEvents)[K]) => void : never : never): Launcher"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<LauncherEvents & DownloaderEvents & CleanerEvents & FileManagerEvents & JavaEvents & PatcherEvents & U>): void"
+        ]
+      }
+    ],
+    "Maintenance": [
+      {
+        "name": "getMaintenance",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<IMaintenance | null>"
+        ]
+      }
+    ],
+    "MicrosoftAuth": [
+      {
+        "name": "auth",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<Account>"
+        ]
+      },
+      {
+        "name": "validate",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<boolean>"
+        ]
+      },
+      {
+        "name": "refresh",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<Account>"
+        ]
+      },
+      {
+        "name": "logout",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<void>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: keyof AuthEvents | K, listener: K extends keyof AuthEvents ? AuthEvents[K] extends unknown[] ? (...args: AuthEvents[K]) => void : never : never): MicrosoftAuth"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<AuthEvents & U>): void"
+        ]
+      }
+    ],
+    "News": [
+      {
+        "name": "getNews",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<INews[]>"
+        ]
+      },
+      {
+        "name": "getCategories",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<INewsCategory[]>"
+        ]
+      },
+      {
+        "name": "getNewsByCategory",
+        "kind": "method",
+        "signatures": [
+          "(categoryId: number): Promise<INews[]>"
+        ]
+      }
+    ],
+    "Profile": [
+      {
+        "name": "getProfiles",
+        "kind": "method",
+        "signatures": [
+          "(account?: Account | undefined): Promise<IProfile[]>",
+          "(slug?: string | undefined): Promise<IProfile[]>",
+          "(account: Account, slug: string): Promise<IProfile[]>"
+        ]
+      },
+      {
+        "name": "auth",
+        "kind": "method",
+        "signatures": [
+          "(slug: string, password: string): Promise<{ slug: string; token: string; }>"
+        ]
+      }
+    ],
+    "Profiles": [
+      {
+        "name": "getProfiles",
+        "kind": "method",
+        "signatures": [
+          "(account?: Account | undefined): Promise<IProfile[]>",
+          "(slug?: string | undefined): Promise<IProfile[]>",
+          "(account: Account, slug: string): Promise<IProfile[]>"
+        ]
+      },
+      {
+        "name": "auth",
+        "kind": "method",
+        "signatures": [
+          "(slug: string, password: string): Promise<{ slug: string; token: string; }>"
+        ]
+      }
+    ],
+    "ServerStatus": [
+      {
+        "name": "getStatus",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<IServerStatus>"
+        ]
+      }
+    ],
+    "Skin": [
+      {
+        "name": "getSkin",
+        "kind": "method",
+        "signatures": [
+          "(active?: boolean): Promise<ISkin[]>"
+        ]
+      },
+      {
+        "name": "getSkins",
+        "kind": "method",
+        "signatures": [
+          "(active?: boolean): Promise<ISkin[]>"
+        ]
+      },
+      {
+        "name": "getCape",
+        "kind": "method",
+        "signatures": [
+          "(active?: boolean): Promise<ICape[]>"
+        ]
+      },
+      {
+        "name": "getCapes",
+        "kind": "method",
+        "signatures": [
+          "(active?: boolean): Promise<ICape[]>"
+        ]
+      },
+      {
+        "name": "getAvatar",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<IAvatar | null>"
+        ]
+      },
+      {
+        "name": "reload",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<void>"
+        ]
+      },
+      {
+        "name": "updateSkin",
+        "kind": "method",
+        "signatures": [
+          "(source: string | File | Blob, variant?: \"classic\" | \"slim\"): Promise<void>"
+        ]
+      },
+      {
+        "name": "updateCape",
+        "kind": "method",
+        "signatures": [
+          "(source: string | File | Blob): Promise<void>"
+        ]
+      },
+      {
+        "name": "deleteCape",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<void>"
+        ]
+      },
+      {
+        "name": "switchCape",
+        "kind": "method",
+        "signatures": [
+          "(capeId: string): Promise<void>"
+        ]
+      },
+      {
+        "name": "hideCape",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<void>"
+        ]
+      }
+    ],
+    "Stats": [
+      {
+        "name": "initialize",
+        "kind": "method",
+        "signatures": [
+          "(): Promise<void>"
+        ]
+      },
+      {
+        "name": "attach",
+        "kind": "method",
+        "signatures": [
+          "(provider: IStatProvider): void"
+        ]
+      }
+    ],
+    "YggdrasilAuth": [
+      {
+        "name": "auth",
+        "kind": "method",
+        "signatures": [
+          "(username: string, password: string): Promise<Account | MultipleProfiles>"
+        ]
+      },
+      {
+        "name": "selectProfile",
+        "kind": "method",
+        "signatures": [
+          "(profiles: MultipleProfiles, select: { id?: string | undefined; name?: string | undefined; }): Account"
+        ]
+      },
+      {
+        "name": "validate",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<boolean>"
+        ]
+      },
+      {
+        "name": "refresh",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<Account>"
+        ]
+      },
+      {
+        "name": "logout",
+        "kind": "method",
+        "signatures": [
+          "(user: Account): Promise<void>"
+        ]
+      },
+      {
+        "name": "on",
+        "kind": "method",
+        "signatures": [
+          "<K>(event: keyof AuthEvents | K, listener: K extends keyof AuthEvents ? AuthEvents[K] extends unknown[] ? (...args: AuthEvents[K]) => void : never : never): YggdrasilAuth"
+        ]
+      },
+      {
+        "name": "forwardEvents",
+        "kind": "method",
+        "signatures": [
+          "<U extends EventMap<U>>(target: EventEmitter<AuthEvents & U>): void"
+        ]
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -20,9 +21,9 @@ export default class Maintenance {
    * @param account The account to use for authentication, in order to potentially bypass
    * maintenance.
    */
-  constructor(url: string, account: Account) {
+  constructor(url: string, account?: Account | null) {
     this.url = `${url}/api`
-    this.account = account
+    this.account = account ?? undefined
   }
 
   /**
@@ -49,8 +50,11 @@ export default class Maintenance {
       throw new EMLLibError(ErrorType.FETCH_ERROR, `Error while fetching maintenance status: ${err instanceof Error ? err.message : err}`)
     }
   }
+
+  /** The launcher's existing blocking policy: respect bypass and wait for the start time. */
+  async getActiveMaintenance(now: Date | number = Date.now()): Promise<IMaintenance | null> {
+    const status = await this.getMaintenance()
+    if (!status?.startTime || status.canBypass) return null
+    return new Date(status.startTime).getTime() <= Number(now) ? status : null
+  }
 }
-
-
-
-

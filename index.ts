@@ -1,3 +1,9 @@
+import { KintareProfiles } from './lib/kintare/profiles.js'
+import { KintareSessions } from './lib/kintare/sessions.js'
+import { KintareClient } from './lib/kintare/client.js'
+import { KintareWardrobes } from './lib/kintare/wardrobes.js'
+import { ProfileAccess } from './lib/profile/access.js'
+import { AuthAgent } from './lib/kintare/auth-agent.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -7,6 +13,7 @@ import MicrosoftAuth from './lib/auth/microsoft.js'
 import YggdrasilAuth from './lib/auth/yggdrasil.js'
 import AzAuth from './lib/auth/azuriom.js'
 import CrackAuth from './lib/auth/crack.js'
+import KintareAuth from './lib/auth/kintare.js'
 import Skin from './lib/skin/skin.js'
 import Bootstrap from './lib/bootstrap/bootstrap.js'
 import Maintenance from './lib/maintenance/maintenance.js'
@@ -24,6 +31,13 @@ type EMLLib = {
   YggdrasilAuth: typeof YggdrasilAuth
   AzAuth: typeof AzAuth
   CrackAuth: typeof CrackAuth
+  KintareProfiles: typeof KintareProfiles
+  KintareSessions: typeof KintareSessions
+  KintareClient: typeof KintareClient
+  KintareWardrobes: typeof KintareWardrobes
+  ProfileAccess: typeof ProfileAccess
+  AuthAgent: typeof AuthAgent
+  KintareAuth: typeof KintareAuth
   Java: typeof Java
   Profiles: typeof Profile // backward compatibility
   Profile: typeof Profile
@@ -44,7 +58,8 @@ export type * from './types/skin.js'
 export type * from './types/background.js'
 export type * from './types/bootstrap.js'
 export type * from './types/config.js'
-export type * from './types/errors.js'
+export { EMLLibError, ErrorType, isEmlNetworkError } from './types/errors.js'
+export type { ErrorCode } from './types/errors.js'
 export type * from './types/events.js'
 export type * from './types/file.js'
 export type * from './types/maintenance.js'
@@ -82,6 +97,11 @@ export { AzAuth }
  * servers!
  */
 export { CrackAuth }
+
+/**
+ * Authenticate a user with [Kintare](https://kintare.studio/).
+ */
+export { KintareAuth }
 
 /**
  * Manage the player's skin, avatar and cape.
@@ -197,13 +217,13 @@ export { CrashReport }
  * **Requirements:**
  * - Node.js 18 or higher: see [Node.js](https://nodejs.org/);
  * - Windows 10 or higher, macOS 10.15 or higher, Linux with glibc 2.28 or higher;
- * - Electron 21 or higher: please install it with `npm i electron` (see README for more 
+ * - Electron 21 or higher: please install it with `npm i electron` (see README for more
  * information about this requirement);
- * - electron-updater 6.0 or higher: please install it with `npm i electron-updater` (see README 
+ * - electron-updater 6.0 or higher: please install it with `npm i electron-updater` (see README
  * for more information about this requirement);
  *
  * **Recommandations:**
- * - Always use this library from the `main` process of Electron (Node.js context), and forward 
+ * - Always use this library from the `main` process of Electron (Node.js context), and forward
  * events to the `renderer` process using IPC if needed.
  * - To get all the capacities of this Node.js library, you should set up your
  * [EML AdminTool](https://emlproject.com/docs/eml-admintool/system-requirements) instance!
@@ -247,7 +267,7 @@ export { CrashReport }
  *
  * ---
  *
- * @version 2.7.3
+ * @version 2.8.0
  * @license MIT — See the `LICENSE` file for more information
  * @copyright Copyright (c) 2026, GoldFrite and contributors
  */
@@ -280,6 +300,17 @@ const EMLLib = {
    * servers!
    */
   CrackAuth,
+
+  /**
+   * Authenticate a user with [Kintare](https://kintare.studio/).
+   */
+  KintareProfiles,
+  KintareSessions,
+  KintareClient,
+  KintareWardrobes,
+  ProfileAccess,
+  AuthAgent,
+  KintareAuth,
 
   /**
    * Manage the player's skin, avatar and cape.
@@ -389,3 +420,38 @@ const EMLLib = {
 
 export default EMLLib
 
+export { configureHttp, HttpClient, httpFetch } from './lib/http/http.js'
+export type { HttpOptions, HttpTransport } from './lib/http/http.js'
+export { ProfileAccess, InstanceAuthError, requestInstanceToken } from './lib/profile/access.js'
+export type { ProfileCredentials, InstanceAuthCode, InstanceAuthResult, InstanceAccessResult } from './lib/profile/access.js'
+export { KintareClient } from './lib/kintare/client.js'
+export { KintareEndpointResolver } from './lib/kintare/endpoints.js'
+export type { KintareOptions, KintareEndpoints } from './lib/kintare/endpoints.js'
+export { KintareGameSession } from './lib/kintare/game-session.js'
+export type { GameSessionOptions } from './lib/kintare/game-session.js'
+export { KintareWardrobes, WardrobeRequestError, validateTexture } from './lib/kintare/wardrobes.js'
+export type * from './types/wardrobe.js'
+export { AuthAgent } from './lib/kintare/auth-agent.js'
+export type { AuthAgentOptions, AuthAgentProgress } from './lib/kintare/auth-agent.js'
+export {
+  DEFAULT_IGNORED_PATHS,
+  USER_DATA_IGNORED_PATHS,
+  reservedMemoryMB,
+  memoryCeilingMB,
+  parseMemoryMB,
+  normalizeMemory,
+  javaConfiguration
+} from './lib/launcher/configuration.js'
+export { serverTarget, sameServerTarget } from './lib/serverstatus/target.js'
+export type { ServerTarget, MinecraftServerStatus, ServerStatusReply } from './lib/serverstatus/target.js'
+
+export { launchSummary } from './lib/launcher/configuration.js'
+export type { LaunchSummary } from './lib/launcher/configuration.js'
+
+export type { GitHubReleaseOptions, GitHubReleaseAsset } from './lib/kintare/github-release.js'
+
+export { KintareProfiles, canManageProfiles } from './lib/kintare/profiles.js'
+export type { ProfileIdentity } from './lib/kintare/profiles.js'
+export { KintareSessions } from './lib/kintare/sessions.js'
+export type { SessionRestoreResult } from './lib/kintare/sessions.js'
+export { jvmArguments } from './lib/launcher/configuration.js'

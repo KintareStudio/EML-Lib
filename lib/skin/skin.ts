@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -20,6 +21,11 @@ export default class Skin {
    * Manage the player's skin, avatar and cape.
    * @param account The account of the player (must be authenticated with EML Lib's authentication
    * system).
+   *
+   * **Attention!** This class does **not** support Kintare accounts, even though Kintare accounts
+   * are tagged `meta.type: 'msa'`. Using this class with a Kintare account will route skin/cape
+   * calls to Microsoft's API and fail. Use `KintareAuth`'s own `uploadSkin()`, `uploadCape()`,
+   * `deleteSkin()`, `deleteCape()` and `getPlayerProfile()` methods instead.
    */
   constructor(account: Account) {
     this.account = account
@@ -792,4 +798,3 @@ export default class Skin {
     // }
   }
 }
-

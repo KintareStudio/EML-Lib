@@ -4,7 +4,7 @@ export interface File {
    */
   name: string
   /**
-   * The path of the file, without the name and the leading slash, but with the trailing slash 
+   * The path of the file, without the name and the leading slash, but with the trailing slash
    * (e.g. `'path/to/file/'`).
    */
   path: string
@@ -42,6 +42,7 @@ export interface File {
 }
 
 export interface ILoader {
+  format?: 'INSTALLER' | 'UNIVERSAL' | 'CLIENT'
   id?: number
   type: 'VANILLA' | 'FORGE' | 'NEOFORGE' | 'FABRIC' | 'QUILT'
   minecraftVersion: string

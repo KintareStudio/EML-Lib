@@ -1,3 +1,4 @@
+import { httpFetch as fetch } from '../http/http.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, IkyMax, GoldFrite

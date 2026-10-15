@@ -10,6 +10,22 @@ import path_ from 'node:path'
 import { ExtraFile } from '../../types/file.js'
 import type { File as File_ } from '../../types/file.js'
 
+/**
+ * Decode a JWT payload WITHOUT verifying its signature. Only for pulling a
+ * non-secret identifier (like `sub`) out of a token we already trust because
+ * we just received it from our own auth server — never use this to
+ * authenticate or authorize anything.
+ */
+function decodeJwtPayloadUnsafe(token: string): Record<string, unknown> | null {
+  try {
+    const payloadSegment = token.split('.')[1]
+    if (!payloadSegment) return null
+    return JSON.parse(Buffer.from(payloadSegment, 'base64url').toString('utf8'))
+  } catch {
+    return null
+  }
+}
+
 export default class ArgumentManager {
   private readonly config: ResolvedConfig
   private readonly minecraftManifest: MinecraftManifest
@@ -181,11 +197,19 @@ export default class ArgumentManager {
       }
     }
 
+    // Real XUID only exists for Microsoft/Xbox accounts. For everyone else
+    // (Kintare/Yggdrasil accounts), fall back to the 'sub' claim of the
+    // access token — never the raw token itself, since launch arguments are
+    // visible to any other process on the machine (`ps aux`, Task Manager,
+    // /proc/<pid>/cmdline), and accessToken here is a live, usable session
+    // credential, not just an opaque id.
+    const xuidFallback = this.config.account.xbox?.xuid || (decodeJwtPayloadUnsafe(this.config.account.accessToken)?.sub as string | undefined) || ''
+
     return deduped.map(
       (arg) =>
         arg
           .replaceAll('${clientid}', this.config.account.clientToken || this.config.account.accessToken)
-          .replaceAll('${auth_xuid}', this.config.account.xbox?.xuid || this.config.account.accessToken)
+          .replaceAll('${auth_xuid}', xuidFallback)
           .replaceAll('${auth_player_name}', this.config.account.name)
           .replaceAll('${auth_uuid}', this.config.account.uuid)
           .replaceAll('${auth_access_token}', this.config.account.accessToken)
@@ -243,4 +267,3 @@ export default class ArgumentManager {
     return this.loaderManifest?.mainClass ?? this.minecraftManifest.mainClass
   }
 }
-

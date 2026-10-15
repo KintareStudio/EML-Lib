@@ -1,3 +1,6 @@
+import os from 'node:os'
+import { DEFAULT_IGNORED_PATHS, normalizeMemory } from './configuration.js'
+import { filterPreservedDownloads } from './preservation.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -46,7 +49,11 @@ export default class Launcher
       throw new EMLLibError(ErrorType.UNKNOWN_OS, `Unsupported OS: ${utils.getOS_MCCode()} ${utils.getArch_MCCode()}`)
     }
 
-    let tmpConfig: Config & { slug?: string; token?: string } = { ...config, slug: undefined, token: undefined }
+    let tmpConfig: Config & { slug?: string; token?: string } = {
+      ...config,
+      slug: undefined,
+      token: undefined
+    }
     tmpConfig.minecraft = this.setMinecraft(tmpConfig)
     tmpConfig.profile = this.setProfile(tmpConfig)
     tmpConfig.url = this.setUrl(tmpConfig)
@@ -123,7 +130,11 @@ export default class Launcher
     const loggingFiles = await fileManager.getLogging()
 
     const javaFilesToDownload = await downloader.getFilesToDownload(javaFiles.java)
-    const modpackFilesToDownload = await downloader.getFilesToDownload(modpackFiles.modpack)
+    const modpackFilesToDownload = await filterPreservedDownloads(
+      await downloader.getFilesToDownload(modpackFiles.modpack),
+      this.config.root,
+      this.config.cleaning.preserveExisting ?? []
+    )
     const librariesFilesToDownload = await downloader.getFilesToDownload(librariesFiles.libraries)
     const assetsFilesToDownload = await downloader.getFilesToDownload(assetsFiles.assets)
     const loaderLibrariesFilesToDownload = await downloader.getFilesToDownload(loaderLibrariesFiles.libraries)
@@ -140,7 +151,12 @@ export default class Launcher
     ]
 
     //* Download
-    this.emit('launch_download', { total: { amount: filesToDownload.length, size: filesToDownload.reduce((acc, file) => acc + file.size!, 0) } })
+    this.emit('launch_download', {
+      total: {
+        amount: filesToDownload.length,
+        size: filesToDownload.reduce((acc, file) => acc + file.size!, 0)
+      }
+    })
 
     await downloader.download(javaFilesToDownload, true)
     await downloader.download(modpackFilesToDownload, true)
@@ -189,7 +205,10 @@ export default class Launcher
     const javaInfo = await java.check(this.config.java.absolutePath, minecraftManifest.javaVersion?.majorVersion ?? 8)
 
     //* Launch
-    this.emit('launch_launch', { ...this.config, java: { ...this.config.java, version: javaInfo.version } })
+    this.emit('launch_launch', {
+      ...this.config,
+      java: { ...this.config.java, version: javaInfo.version }
+    })
 
     const customAuth = argumentManager.getCustomArgs(injectorFiles)
     const args = argumentManager.getArgs([...loaderFiles.libraries, ...librariesFiles.libraries, ...loaderLibrariesFiles.libraries], customAuth)
@@ -320,7 +339,11 @@ export default class Launcher
     }
 
     const version = activeMcSource.version!
-    let loader: { loader: 'vanilla' | 'forge' | 'neoforge' | 'fabric' | 'quilt'; version: string; manifestUrl?: string }
+    let loader: {
+      loader: 'vanilla' | 'forge' | 'neoforge' | 'fabric' | 'quilt'
+      version: string
+      manifestUrl?: string
+    }
 
     const loaderCfg = activeMcSource.loader
     if (!loaderCfg || loaderCfg.loader === 'vanilla') {
@@ -329,7 +352,11 @@ export default class Launcher
       if (!loaderCfg.version) {
         throw new EMLLibError(ErrorType.CONFIG_ERROR, `You must provide a loader version in the config when using a loader different from vanilla.`)
       }
-      loader = { loader: loaderCfg.loader, version: loaderCfg.version, manifestUrl: loaderCfg.manifestUrl }
+      loader = {
+        loader: loaderCfg.loader,
+        version: loaderCfg.version,
+        manifestUrl: loaderCfg.manifestUrl
+      }
     }
 
     const args = isValidProfile && config.profile?.minecraft?.args ? config.profile.minecraft.args : config.minecraft?.args || []
@@ -386,9 +413,8 @@ export default class Launcher
   }
 
   private setCleaning(config: Config) {
-    const DEFAULT_IGNORED = ['crash-reports/', 'logs/', 'resourcepacks/', 'resources/', 'saves/', 'shaderpacks/', 'options.txt', 'optionsof.txt']
     let enabled = true
-    let ignored: string[] = DEFAULT_IGNORED
+    let ignored: string[] = [...DEFAULT_IGNORED_PATHS]
 
     if (config.cleaning?.enabled !== undefined) {
       enabled = config.cleaning.enabled
@@ -405,10 +431,14 @@ export default class Launcher
     }
 
     if (config.cleaning?.ignored) {
-      ignored = config.cleaning.ignored
+      ignored = config.cleaning.ignoredMode === 'extend' ? [...ignored, ...config.cleaning.ignored] : config.cleaning.ignored
     }
 
-    return { enabled, ignored }
+    return {
+      enabled,
+      ignored: [...new Set([...ignored, ...(config.cleaning?.additionalIgnored ?? [])])],
+      preserveExisting: config.cleaning?.preserveExisting ?? []
+    }
   }
 
   private setAccount(config: Config) {
@@ -468,18 +498,7 @@ export default class Launcher
   }
 
   private setMemory(config: Config) {
-    let min = 512
-    let max = 1023
-
-    if (config.memory?.min && config.memory.min > 128) {
-      min = config.memory.min
-    }
-
-    if (config.memory?.max && config.memory.max > min) {
-      max = config.memory.max
-    }
-
-    return { min, max }
+    return normalizeMemory(config.memory, os.totalmem() / 1024 / 1024)
   }
 
   private async run(javaPath: string, args: string[]) {
@@ -512,4 +531,3 @@ export default class Launcher
     })
   }
 }
-
