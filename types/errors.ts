@@ -29,6 +29,7 @@ export const ErrorType = {
   TWOFA_CODE_REQUIRED: 'TWOFA_CODE_REQUIRED',
   AUTH_ERROR: 'AUTH_ERROR',
   AUTH_CANCELLED: 'AUTH_CANCELLED',
+  OPERATION_CANCELLED: 'OPERATION_CANCELLED',
   HASH_ERROR: 'HASH_ERROR',
   DOWNLOAD_ERROR: 'DOWNLOAD_ERROR',
   UNKNOWN_OS: 'UNKNOWN_OS',
@@ -50,6 +51,7 @@ export type ErrorCode =
   | typeof ErrorType.TWOFA_CODE_REQUIRED
   | typeof ErrorType.AUTH_ERROR
   | typeof ErrorType.AUTH_CANCELLED
+  | typeof ErrorType.OPERATION_CANCELLED
   | typeof ErrorType.DOWNLOAD_ERROR
   | typeof ErrorType.HASH_ERROR
   | typeof ErrorType.UNKNOWN_OS

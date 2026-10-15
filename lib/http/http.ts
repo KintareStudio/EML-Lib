@@ -1,4 +1,5 @@
 import { EMLLibError, ErrorType } from '../../types/errors.js'
+import { checkCancellation, operationSignal, requestSignal } from '../utils/operation.js'
 
 export type HttpTransport = (url: string, init?: RequestInit) => Promise<Response>
 export interface HttpOptions {
@@ -53,15 +54,17 @@ export class HttpClient {
   constructor(private readonly options: HttpOptions = {}) {}
 
   async fetch(url: string, init: RequestInit = {}): Promise<Response> {
+    checkCancellation()
     const headers = new Headers(init.headers)
     const authenticated = headers.has('Authorization') || headers.has('Cookie') || init.body != null
     try {
       return await (this.options.fetch ?? defaultTransport)(url, {
         ...init,
         redirect: init.redirect ?? (authenticated ? 'error' : 'follow'),
-        signal: init.signal ?? AbortSignal.timeout(this.options.timeoutMs ?? 30_000)
+        signal: init.signal ?? requestSignal(operationSignal(), this.options.timeoutMs ?? 30_000)
       })
     } catch (cause) {
+      checkCancellation()
       if (cause instanceof EMLLibError) throw cause
       throw new EMLLibError(ErrorType.NET_ERROR, 'The server could not be reached.', { cause })
     }

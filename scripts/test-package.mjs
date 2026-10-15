@@ -39,14 +39,29 @@ try {
   await writeFile(
     path.join(temporary, 'consumer.mts'),
     `
-import EML, { type Account, type Config, type IProfile, KintareClient, EMLLibError, ErrorType } from 'eml-lib'
+import EML, { type Account, type Config, type IProfile, type OperationOptions, type DownloaderOptions, Downloader, KintareClient, EMLLibError, ErrorType } from 'eml-lib'
 import DeepProfile from 'eml-lib/lib/profile/profile.js'
+import DeepDownloader from 'eml-lib/lib/utils/downloader.js'
 import index from 'eml-lib/index.js'
 import { normalizeMemory } from 'eml-lib/configuration'
 import { canManageProfiles } from 'eml-lib/profiles'
 declare const account: Account
 const config: Config = { root: 'fixture', account, minecraft: { version: '1.21.1' }, cleaning: { ignored: ['custom/'] } }
 const launcher = new EML.Launcher(config)
+const operation: OperationOptions = { signal: new AbortController().signal }
+const downloads: DownloaderOptions = { adminToolUrl: 'https://fixture.invalid', retries: 0, timeoutMs: 1000, ...operation }
+const downloader: DeepDownloader = new Downloader('fixture', 'profile-token', downloads)
+launcher.on('launch_cancelled', () => {})
+launcher.on('download_cancelled', ({ downloaded }) => { const size: number = downloaded.size; void size })
+async function cancellationConsumers() {
+  await launcher.launch()
+  await launcher.launch(operation)
+  await new EML.Java({ root: 'fixture', minecraft: { version: '1.21.1' } }).download(operation)
+  await new DeepDownloader('fixture', 'profile-token').download([])
+  await downloader.download([], false, { ...operation, retryDelayMs: 1 })
+  await downloader.getFilesToDownload([], operation)
+}
+new EMLLibError(ErrorType.OPERATION_CANCELLED, 'Cancelled')
 const profiles: Promise<IProfile[]> = new DeepProfile('https://fixture.invalid', account).getProfiles(account)
 const token: Promise<{ slug: string; token: string }> = new EML.Profiles('https://fixture.invalid').auth('pack', 'password')
 new EML.Maintenance('https://fixture.invalid', account)
@@ -55,7 +70,7 @@ new EML.CrashReport('https://fixture.invalid')
 new EMLLibError(ErrorType.AUTH_ERROR, 'Fixture')
 new index.News('https://fixture.invalid')
 const avatar: Promise<string> = new KintareClient().avatarUrl('Fixture')
-void [launcher, profiles, token, avatar, normalizeMemory(), canManageProfiles('admin')]
+void [launcher, profiles, token, avatar, cancellationConsumers, normalizeMemory(), canManageProfiles('admin')]
 `
   )
   await writeFile(

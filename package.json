@@ -102,6 +102,7 @@
     "dist/types/*.d.ts",
     "dist/types/*.js",
     "dist/types/*.js.map",
-    "docs/upstream-comparison.es.md"
+    "docs/upstream-comparison.es.md",
+    "docs/reliable-downloads.es.md"
   ]
 }

@@ -3,7 +3,6 @@
  * @copyright Copyright (c) 2026, GoldFrite
  */
 
-import yauzl from 'yauzl'
 import { ResolvedConfig } from '../../types/config.js'
 import { File } from '../../types/file.js'
 import { MinecraftManifest } from '../../types/manifest.js'
@@ -11,7 +10,9 @@ import utils from '../utils/utils.js'
 import fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path_ from 'node:path'
-import { spawn } from 'node:child_process'
+import { preparationProcess } from '../utils/preparation-process.js'
+import { checkCancellation } from '../utils/operation.js'
+import { EMLLibError, ErrorType } from '../../types/errors.js'
 import EventEmitter from '../utils/events.js'
 import { PatcherEvents } from '../../types/events.js'
 
@@ -30,6 +31,7 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
   }
 
   async patch(): Promise<File[]> {
+    checkCancellation()
     const files = await this.isPatched()
     let i = 0
 
@@ -44,8 +46,11 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
     }
 
     const processors = this.installProfile.processors
+    const incomplete = path_.join(this.config.root, '.eml-patch-incomplete')
+    await fs.writeFile(incomplete, 'Loader preparation did not complete.\n')
 
     for (const processor of processors) {
+      checkCancellation()
       if (processor?.sides && !processor.sides.includes('client')) continue
 
       const jarExtractPathName = path_.join(this.config.root, 'libraries', utils.getLibraryPath(processor.jar), utils.getLibraryName(processor.jar))
@@ -60,23 +65,20 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
         continue
       }
 
-      await new Promise((resolve) => {
-        const patch = spawn(
-          `"${this.config.java.absolutePath.replace('${X}', this.minecraftManifest.javaVersion?.majorVersion + '' || '8')}"`,
-          ['-Xmx2G', '-classpath', [`"${jarExtractPathName}"`, ...classpath].join(path_.delimiter), mainClass, ...args],
-          { shell: true }
-        )
-
-        patch.stdout.on('data', (data: Buffer) => this.emit('patch_debug', data.toString('utf8').replace(/\n$/, '')))
-        patch.stderr.on('data', (data: Buffer) => this.emit('patch_debug', data.toString('utf8').replace(/\n$/, '')))
-        patch.on('close', (code) => {
-          this.emit('patch_progress', { filename: utils.getLibraryName(processor.jar) })
-          i++
-          resolve(code)
-        })
-      })
+      const code = await preparationProcess(
+        `"${this.config.java.absolutePath.replace('${X}', this.minecraftManifest.javaVersion?.majorVersion + '' || '8')}"`,
+        ['-Xmx2G', '-classpath', [`"${jarExtractPathName}"`, ...classpath].join(path_.delimiter), mainClass, ...args],
+        { shell: true },
+        (data) => this.emit('patch_debug', data.toString('utf8').replace(/\n$/, ''))
+      )
+      checkCancellation()
+      if (code !== 0) throw new EMLLibError(ErrorType.PATCHER_ERROR, `Loader processor failed with exit code ${code}`)
+      this.emit('patch_progress', { filename: utils.getLibraryName(processor.jar) })
+      i++
     }
 
+    checkCancellation()
+    await fs.unlink(incomplete)
     const resultAfterPatch = await this.isPatched()
     this.emit('patch_end', { amount: i })
 
@@ -122,50 +124,29 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
     })
 
     const result = await Promise.all(promises)
-    const patched = result.length > 0 && result.every((c) => c.patched)
+    const patched = !existsSync(path_.join(this.config.root, '.eml-patch-incomplete')) && result.length > 0 && result.every((c) => c.patched)
     const files = result.map((c) => c.file as File)
 
     return { patched, files }
   }
 
-  private async getJarMain(jarPath: string) {
-    return new Promise<string | null>((resolve) => {
-      if (!existsSync(jarPath)) return resolve(null)
-
-      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
-        if (err || !zipfile) return resolve(null)
-
-        zipfile.readEntry()
-        zipfile.on('entry', (entry: yauzl.Entry) => {
-          if (entry.fileName === 'META-INF/MANIFEST.MF') {
-            zipfile.openReadStream(entry, (err, readStream) => {
-              if (err || !readStream) {
-                zipfile.close()
-                return resolve(null)
-              }
-
-              let data = ''
-              readStream.on('data', (chunk: Buffer) => (data += chunk.toString('utf8')))
-              readStream.on('end', () => {
-                zipfile.close()
-
-                try {
-                  const mainClass = data.split('Main-Class: ')[1].split(/\r?\n/)[0].trim()
-                  resolve(mainClass)
-                } catch {
-                  resolve(null)
-                }
-              })
-            })
-          } else {
-            zipfile.readEntry()
-          }
-        })
-
-        zipfile.on('end', () => resolve(null))
-        zipfile.on('error', () => resolve(null))
-      })
-    })
+  private async getJarMain(jarPath: string): Promise<string | null> {
+    checkCancellation()
+    if (!existsSync(jarPath)) return null
+    try {
+      const { zipfile, entries } = await utils.openZip(jarPath)
+      try {
+        const entry = entries.find((entry) => entry.fileName === 'META-INF/MANIFEST.MF')
+        if (!entry) return null
+        const data = (await utils.readEntryData(zipfile, entry)).toString('utf8')
+        return data.split('Main-Class: ')[1]?.split(/\r?\n/)[0]?.trim() ?? null
+      } finally {
+        await utils.closeZip(zipfile)
+      }
+    } catch (error) {
+      checkCancellation()
+      return null
+    }
   }
 
   private mapArg(arg: string) {
@@ -213,4 +194,3 @@ export default class Patcher extends EventEmitter<PatcherEvents> {
     return arg
   }
 }
-

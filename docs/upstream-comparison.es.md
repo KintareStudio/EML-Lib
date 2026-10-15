@@ -41,7 +41,7 @@ Las reglas visuales, almacenamiento cifrado y ciclo de vida de Electron pertenec
 
 - `test/fixtures/upstream-2.7.3.json` registra las 17 exportaciones de valor oficiales, los aliases del objeto predeterminado y sus métodos y getters públicos. Incluye el commit exacto que se usó para generar el contrato.
 - `test/upstream-compat.test.mjs` comprueba esa superficie, los valores predeterminados y las rutas y cabeceras de AdminTool.
-- `npm run test:unit` compila y ejecuta 63 pruebas offline.
+- `npm run test:unit` compila y ejecuta las pruebas offline, incluidas las regresiones de descarga, integridad y cancelación de la [primera entrega de fiabilidad](reliable-downloads.es.md).
 - `npm run test:package` empaqueta e instala el tarball como `eml-lib` en un consumidor temporal, comprueba imports raíz y profundos y compila un consumidor TypeScript. No usa los fuentes del fork como alias de resolución.
 - `npm run compare:upstream -- ../EML-Lib-upstream` contrasta la copia oficial compilada con el fork: ocho operaciones de AdminTool tienen respuestas y trazas de solicitud iguales; tres configuraciones sin extensiones tienen la misma configuración resuelta.
 

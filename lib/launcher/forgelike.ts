@@ -14,6 +14,9 @@ import path_ from 'node:path'
 import utils from '../utils/utils.js'
 import EventEmitter from '../utils/events.js'
 import { FileManagerEvents } from '../../types/events.js'
+import { checkCancellation, operationSignal, settledOperations } from '../utils/operation.js'
+import type { Readable } from 'node:stream'
+import { randomUUID } from 'node:crypto'
 
 export default class ForgeLikeLoader extends EventEmitter<FileManagerEvents> {
   private readonly config: ResolvedConfig
@@ -38,32 +41,68 @@ export default class ForgeLikeLoader extends EventEmitter<FileManagerEvents> {
   }
 
   async extractZip(): Promise<{ libraries: ExtraFile[]; files: File[] }> {
+    checkCancellation()
     const forgeZipPath = path_.join(this.config.root, this.installer.path, this.installer.name)
     const vanillaJarPath = path_.join(this.config.root, 'versions', this.minecraftManifest.id, `${this.minecraftManifest.id}.jar`)
-    const patchedJarPath = path_.join(this.config.root, 'versions', `${this.minecraftManifest.id}-patched.jar`)
+    const patchedJarPath = path_.join(path_.dirname(vanillaJarPath), `.${this.minecraftManifest.id}.${randomUUID()}.part`)
 
     let i = 0
 
     const { zipfile: vanillaZip, entries: vanillaEntries } = await utils.openZip(vanillaJarPath)
-    const { zipfile: forgeZip, entries: forgeEntries } = await utils.openZip(forgeZipPath)
+    let forge: Awaited<ReturnType<typeof utils.openZip>>
+    try {
+      forge = await utils.openZip(forgeZipPath)
+    } catch (error) {
+      await utils.closeZip(vanillaZip)
+      throw error
+    }
+    const { zipfile: forgeZip, entries: forgeEntries } = forge
+    const signal = operationSignal()
+    let output: ReturnType<typeof createWriteStream> | undefined
+    let archive: yazl.ZipFile | undefined
+    let outputClosed: Promise<void> | undefined
+    let created = false
+    let installed = false
+    const destroyArchive = () => {
+      const stream = archive?.outputStream as Readable | undefined
+      stream?.destroy()
+    }
+    const abort = () => {
+      output?.destroy()
+      destroyArchive()
+    }
+    signal?.addEventListener('abort', abort, { once: true })
 
     try {
       const yazlZip = new yazl.ZipFile()
-      const writeStream = createWriteStream(patchedJarPath)
+      const writeStream = createWriteStream(patchedJarPath, { flags: 'wx', mode: (await fs.stat(vanillaJarPath)).mode & 0o777 })
+      output = writeStream
+      archive = yazlZip
+      let writeFailure: Error | undefined
+      outputClosed = new Promise((resolve) => writeStream.once('close', resolve))
+      writeStream.once('open', () => {
+        created = true
+      })
       const forgeFileNames = new Set(forgeEntries.map((e) => e.fileName))
 
       writeStream.on('error', (err) => {
-        yazlZip.end()
-        throw err
+        writeFailure = err
+        destroyArchive()
+      })
+      yazlZip.outputStream.on('error', (error) => {
+        writeFailure = error
+        writeStream.destroy()
       })
       yazlZip.outputStream.pipe(writeStream)
 
       for (const entry of vanillaEntries) {
+        checkCancellation()
         if (entry.fileName.startsWith('META-INF/') || entry.fileName.endsWith('/') || forgeFileNames.has(entry.fileName)) continue
         await utils.pipeEntryToYazl(vanillaZip, entry, yazlZip)
       }
 
       for (const entry of forgeEntries) {
+        checkCancellation()
         if (entry.fileName.endsWith('/')) continue
         await utils.pipeEntryToYazl(forgeZip, entry, yazlZip)
         i++
@@ -72,24 +111,32 @@ export default class ForgeLikeLoader extends EventEmitter<FileManagerEvents> {
 
       yazlZip.end()
 
-      await new Promise<void>((resolve, reject) => {
-        writeStream.on('close', resolve)
-        writeStream.on('error', reject)
-      })
-
-      await fs.unlink(vanillaJarPath)
+      await outputClosed
+      checkCancellation()
+      if (writeFailure) throw writeFailure
+      await Promise.all([utils.closeZip(vanillaZip), utils.closeZip(forgeZip)])
+      checkCancellation()
       await fs.rename(patchedJarPath, vanillaJarPath)
+      installed = true
 
       this.emit('extract_end', { amount: i })
 
       return { libraries: [], files: [] }
     } finally {
-      vanillaZip.close()
-      forgeZip.close()
+      signal?.removeEventListener('abort', abort)
+      output?.destroy()
+      destroyArchive()
+      await Promise.all([utils.closeZip(vanillaZip), utils.closeZip(forgeZip)])
+      await outputClosed
+      if (created && !installed)
+        await fs.unlink(patchedJarPath).catch((error) => {
+          if (error.code !== 'ENOENT') throw error
+        })
     }
   }
 
   async extractJar(): Promise<{ libraries: ExtraFile[]; files: File[] }> {
+    checkCancellation()
     const forgeZipPath = path_.join(this.config.root, this.installer.path, this.installer.name)
 
     let files: File[] = []
@@ -147,7 +194,7 @@ export default class ForgeLikeLoader extends EventEmitter<FileManagerEvents> {
           this.emit('extract_progress', { filename: path_.basename(entry.fileName) })
         })
 
-        await Promise.all(promises)
+        await settledOperations(promises)
       }
 
       if (profile.processors && profile.processors.length > 0) {
@@ -204,8 +251,7 @@ export default class ForgeLikeLoader extends EventEmitter<FileManagerEvents> {
 
       return { libraries, files }
     } finally {
-      zipfile.close()
+      await utils.closeZip(zipfile)
     }
   }
 }
-

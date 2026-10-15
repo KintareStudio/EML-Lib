@@ -1,4 +1,5 @@
 import { httpFetch as fetch } from '../http/http.js'
+import { checkCancellation, operationSignal, operationStream } from './operation.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -10,12 +11,21 @@ import fs, { createWriteStream } from 'node:fs'
 import os from 'node:os'
 import { createHash } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
+import type { Readable } from 'node:stream'
 import { ExtraFile } from '../../types/file.js'
 import { ResolvedConfig } from '../../types/config.js'
 import yauzl from 'yauzl'
 import yazl from 'yazl'
 
 class Utils {
+  private readonly zipClosures = new WeakMap<yauzl.ZipFile, Promise<void>>()
+
+  /** Wait for the archive's descriptor and all entry readers to close. */
+  async closeZip(zipfile: yauzl.ZipFile): Promise<void> {
+    const closed = this.zipClosures.get(zipfile)
+    zipfile.close()
+    await closed
+  }
   /**
    * Get the current operating system code.
    * @returns The operating system code (`'win'`, `'mac'` or `'lin'`).
@@ -145,7 +155,7 @@ class Utils {
   async getFileHash(filePath: string): Promise<string> {
     try {
       const hash = createHash('sha1')
-      const input = fs.createReadStream(filePath)
+      const input = operationStream(fs.createReadStream(filePath))
       await pipeline(input, hash)
       return hash.digest('hex')
     } catch (err) {
@@ -368,15 +378,38 @@ class Utils {
    * @returns An object containing the zipfile and an array of entries.
    */
   openZip(zipPath: string): Promise<{ zipfile: yauzl.ZipFile; entries: yauzl.Entry[] }> {
+    checkCancellation()
     return new Promise((resolve, reject) => {
       yauzl.open(zipPath, { lazyEntries: false, autoClose: false }, (err, zipfile) => {
         if (err || !zipfile) {
           return reject(err ?? new EMLLibError(ErrorType.FILE_ERROR, `Failed to open ${zipPath}`))
         }
         const entries: yauzl.Entry[] = []
+        this.zipClosures.set(zipfile, new Promise((resolve) => zipfile.once('close', resolve)))
+        const signal = operationSignal()
+        const abort = () => {
+          cleanup()
+          void this.closeZip(zipfile).then(() => {
+            try {
+              checkCancellation(signal)
+            } catch (error) {
+              reject(error)
+            }
+          }, reject)
+        }
+        signal?.addEventListener('abort', abort, { once: true })
+        const cleanup = () => signal?.removeEventListener('abort', abort)
+        if (signal?.aborted) return abort()
         zipfile.on('entry', (entry) => entries.push(entry))
-        zipfile.on('end', () => resolve({ zipfile, entries }))
-        zipfile.on('error', reject)
+        zipfile.on('end', () => {
+          cleanup()
+          resolve({ zipfile, entries })
+        })
+        zipfile.on('error', (error) => {
+          cleanup()
+          void this.closeZip(zipfile).then(() => reject(error), reject)
+        })
+        zipfile.once('close', cleanup)
       })
     })
   }
@@ -388,12 +421,14 @@ class Utils {
    * @returns A promise resolving to the buffer containing the entry data.
    */
   readEntryData(zipfile: yauzl.ZipFile, entry: yauzl.Entry): Promise<Buffer> {
+    checkCancellation()
     return new Promise((resolve, reject) => {
       zipfile.openReadStream(entry, (err, readStream) => {
         if (err || !readStream) {
           return reject(err ?? new EMLLibError(ErrorType.FILE_ERROR, `Failed to open read stream for ${entry.fileName}`))
         }
         const chunks: Buffer[] = []
+        operationStream(readStream)
         readStream.on('data', (chunk) => chunks.push(chunk))
         readStream.on('end', () => resolve(Buffer.concat(chunks)))
         readStream.on('error', reject)
@@ -409,17 +444,13 @@ class Utils {
    * @returns A promise resolving when the extraction is complete.
    */
   extractEntryToFile(zipfile: yauzl.ZipFile, entry: yauzl.Entry, destPath: string): Promise<void> {
+    checkCancellation()
     return new Promise((resolve, reject) => {
       zipfile.openReadStream(entry, (err, readStream) => {
         if (err || !readStream) {
           return reject(err ?? new EMLLibError(ErrorType.FILE_ERROR, `Failed to open read stream for ${entry.fileName}`))
         }
-        const writeStream = createWriteStream(destPath)
-        readStream.pipe(writeStream)
-
-        writeStream.on('close', resolve)
-        writeStream.on('error', reject)
-        readStream.on('error', reject)
+        pipeline(readStream, createWriteStream(destPath), { signal: operationSignal() }).then(() => resolve(), reject)
       })
     })
   }
@@ -432,14 +463,40 @@ class Utils {
    * @returns A promise resolving when the piping is complete.
    */
   pipeEntryToYazl(sourceZip: yauzl.ZipFile, entry: yauzl.Entry, destZip: yazl.ZipFile): Promise<void> {
+    checkCancellation()
     return new Promise((resolve, reject) => {
       sourceZip.openReadStream(entry, (err, readStream) => {
         if (err || !readStream) {
           return reject(err ?? new EMLLibError(ErrorType.FILE_ERROR, `Failed to open read stream for ${entry.fileName}`))
         }
-        destZip.addReadStream(readStream, entry.fileName)
-        readStream.on('end', resolve)
-        readStream.on('error', reject)
+        operationStream(readStream)
+        const output = destZip.outputStream
+        const cleanup = () => {
+          output.removeListener('error', failed)
+          output.removeListener('close', closed)
+        }
+        const failed = (error: Error) => {
+          readStream.destroy()
+          cleanup()
+          reject(error)
+        }
+        const closed = () => failed(new EMLLibError(ErrorType.FILE_ERROR, 'Archive output closed before its entry completed.'))
+        readStream.once('end', () => {
+          cleanup()
+          resolve()
+        })
+        readStream.once('error', (error) => {
+          cleanup()
+          reject(error)
+        })
+        output.once('error', failed)
+        output.once('close', closed)
+        if ((output as Readable).destroyed) return closed()
+        try {
+          destZip.addReadStream(readStream, entry.fileName)
+        } catch (error) {
+          failed(error instanceof Error ? error : new Error(String(error)))
+        }
       })
     })
   }

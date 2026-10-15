@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs'
 import { CleanerEvents } from '../../types/events.js'
 import { File } from '../../types/file.js'
 import { ResolvedConfig } from '../../types/config.js'
+import { checkCancellation, settledOperations } from '../utils/operation.js'
 
 export default class Cleaner extends EventEmitter<CleanerEvents> {
   private readonly config: ResolvedConfig
@@ -27,48 +28,48 @@ export default class Cleaner extends EventEmitter<CleanerEvents> {
    * @param skipClean [Optional: defaults to `false`] Skip the cleaning process (skip this method).
    */
   async clean(files: File[], ignore: string[] = [], skipClean: boolean = false): Promise<void> {
+    checkCancellation()
     const dest = this.config.root
     if (skipClean) return
 
     const validFilesSet = new Set(files.map((f) => path_.resolve('/', dest, f.path, f.name).replace(/\\/g, '/')))
     const ignoredPaths = ignore.map((ig) => path_.resolve(dest, ig))
-    const deletePromises: Promise<void>[] = []
     let i = 0
 
     const browsed: { name: string; path: string }[] = []
     await this.browse(dest, browsed)
     for (const file of browsed) {
+      checkCancellation()
       const fullPath = path_.resolve('/', file.path, file.name).replace(/\\/g, '/')
       const isFileValid = validFilesSet.has(fullPath)
       const isIgnored = ignoredPaths.some((ig) => fullPath === ig.replace(/\\/g, '/') || fullPath.startsWith(`${ig.replace(/\\/g, '/')}/`))
       if (!isFileValid && !isIgnored) {
-        deletePromises.push(
-          fs
-            .unlink(fullPath)
-            .then(() => {
-              i++
-              this.emit('clean_progress', { filename: file.name })
-            })
-            .catch((err) => {
-              this.emit('clean_error', { filename: file.name, message: err })
-            })
-        )
+        try {
+          await fs.unlink(fullPath)
+          i++
+          this.emit('clean_progress', { filename: file.name })
+        } catch (err) {
+          checkCancellation()
+          this.emit('clean_error', { filename: file.name, message: err instanceof Error ? err : String(err) })
+        }
       }
 
       // can't check hash for performance reasons
     }
 
-    await Promise.all(deletePromises)
+    checkCancellation()
 
     this.emit('clean_end', { amount: i })
   }
 
   private async browse(dir: string, browsed: { name: string; path: string }[] = []) {
+    checkCancellation()
     if (!existsSync(dir)) return
 
     const files = await fs.readdir(dir)
 
     const promises = files.map(async (file) => {
+      checkCancellation()
       const fullPath = path_.join(dir, file)
       const stats = await fs.lstat(fullPath)
       if (stats.isSymbolicLink()) return
@@ -83,6 +84,6 @@ export default class Cleaner extends EventEmitter<CleanerEvents> {
       }
     })
 
-    await Promise.all(promises)
+    await settledOperations(promises)
   }
 }

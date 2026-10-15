@@ -1,4 +1,6 @@
 import { httpFetch as fetch } from '../http/http.js'
+import { adminToolMetadataUrl } from '../utils/trusted-download.js'
+import { checkCancellation, settledOperations } from '../utils/operation.js'
 /**
  * @license MIT
  * @copyright Copyright (c) 2026, GoldFrite
@@ -12,9 +14,7 @@ import { Artifact, MinecraftManifest, Assets } from '../../types/manifest.js'
 import utils from '../utils/utils.js'
 import path_ from 'node:path'
 import fs from 'node:fs/promises'
-import { createWriteStream } from 'node:fs'
 import { existsSync } from 'node:fs'
-import yauzl from 'yauzl'
 import EventEmitter from '../utils/events.js'
 import { FileManagerEvents } from '../../types/events.js'
 import Java from '../java/java.js'
@@ -72,8 +72,9 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
     if (!this.config.url && !this.config.minecraft.modpackUrl) return { modpack: [], files: [] }
 
     try {
-      const headers: HeadersInit = this.config.profile.token ? { Authorization: `Bearer ${this.config.profile.token}` } : {}
       const url = this.config.url ? `${this.config.url}/api/files-updater/${this.config.profile.slug ?? ''}` : this.config.minecraft.modpackUrl!
+      const headers: HeadersInit =
+        this.config.profile.token && adminToolMetadataUrl(url, this.config.url) ? { Authorization: `Bearer ${this.config.profile.token}` } : {}
       const req = await fetch(url, { headers })
 
       if (!req.ok) {
@@ -318,109 +319,48 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
    * @returns `files`: all files created by this method.
    */
   async extractNatives(libraries: File[]): Promise<{ files: File[] }> {
-    const natives = libraries.filter((lib) => lib.type === 'NATIVE')
+    checkCancellation()
     const nativesFolder = path_.resolve(this.config.root, 'bin', this.minecraftManifest.id)
     const claimedBy = new Map<string, string>()
-    let files: File[] = []
-
-    if (!existsSync(nativesFolder)) {
-      await fs.mkdir(nativesFolder, { recursive: true })
-    }
-
-    const extract = (native: File) => {
-      return new Promise<void>((resolve, reject) => {
-        const zipPath = path_.join(this.config.root, native.path, native.name)
-        if (!existsSync(zipPath)) return resolve()
-
-        yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
-          if (err || !zipfile) {
-            return reject(new EMLLibError(ErrorType.FILE_ERROR, `Failed to open ${native.name}`))
-          }
-
-          zipfile.readEntry()
-          zipfile.on('entry', (entry: yauzl.Entry) => {
-            if (entry.fileName.startsWith('META-INF')) {
-              return zipfile.readEntry()
-            }
-
-            const entryName = entry.fileName.replace(/\\/g, '/').replace(/^\/+/, '')
-            const entryPath = path_.resolve(nativesFolder, entryName)
-            const relative = path_.relative(nativesFolder, entryPath)
-            const isSafe = relative && !relative.startsWith('..') && !path_.isAbsolute(relative)
-
-            if (!isSafe || !entryName) {
-              console.warn(`[Security] Skipped unsafe native extraction: ${entry.fileName}`)
-              return zipfile.readEntry()
-            }
-
-            // Two archives can declare the same entry (e.g. several LWJGL versions all shipping
-            // `lwjgl64.dll`). Keeping the first one makes the result deterministic instead of
-            // depending on which archive happens to finish last.
-            if (!entry.fileName.endsWith('/')) {
-              const claimKey = utils.getOS() === 'win' ? entryPath.toLowerCase() : entryPath
-              const owner = claimedBy.get(claimKey)
-
-              if (owner) {
-                console.warn(`[Natives] ${path_.basename(entryName)} was already extracted from ${owner}, skipping the one in ${native.name}`)
-                return zipfile.readEntry()
-              }
-
-              claimedBy.set(claimKey, native.name)
-            }
-
-            const tmpFile = {
-              name: path_.basename(entryName),
-              path: path_.join('bin', this.minecraftManifest.id, path_.dirname(entryName), '/'),
-              url: '',
-              sha1: '',
-              size: entry.uncompressedSize
-            }
-
-            if (entry.fileName.endsWith('/')) {
-              files.push({ ...tmpFile, type: 'FOLDER' })
-              fs.mkdir(entryPath, { recursive: true })
-                .then(() => zipfile.readEntry())
-                .catch(reject)
-            } else {
-              fs.mkdir(path_.dirname(entryPath), { recursive: true })
-                .then(() => {
-                  zipfile.openReadStream(entry, (err, readStream) => {
-                    if (err || !readStream) {
-                      return reject(new EMLLibError(ErrorType.FILE_ERROR, `Failed to open read stream for ${entry.fileName}`))
-                    }
-
-                    const writeStream = createWriteStream(entryPath)
-                    readStream.pipe(writeStream)
-
-                    writeStream.on('close', () => {
-                      files.push({ ...tmpFile, type: 'NATIVE' })
-                      zipfile.readEntry()
-                    })
-                    writeStream.on('error', reject)
-                    readStream.on('error', reject)
-                  })
-                })
-                .catch(reject)
-            }
+    const files: File[] = []
+    await fs.mkdir(nativesFolder, { recursive: true })
+    for (const native of libraries.filter((file) => file.type === 'NATIVE')) {
+      checkCancellation()
+      const zipPath = path_.join(this.config.root, native.path, native.name)
+      if (!existsSync(zipPath)) continue
+      const { zipfile, entries } = await utils.openZip(zipPath)
+      try {
+        for (const entry of entries) {
+          checkCancellation()
+          if (entry.fileName.startsWith('META-INF')) continue
+          const entryName = entry.fileName.replace(/\\/g, '/').replace(/^\/+/, '')
+          const entryPath = path_.resolve(nativesFolder, entryName)
+          const relative = path_.relative(nativesFolder, entryPath)
+          if (!relative || relative === '..' || relative.startsWith(`..${path_.sep}`) || path_.isAbsolute(relative)) continue
+          const isDirectory = entry.fileName.endsWith('/')
+          const claimKey = utils.getOS() === 'win' ? entryPath.toLowerCase() : entryPath
+          if (!isDirectory && claimedBy.has(claimKey)) continue
+          if (!isDirectory) claimedBy.set(claimKey, native.name)
+          await fs.mkdir(isDirectory ? entryPath : path_.dirname(entryPath), { recursive: true })
+          checkCancellation()
+          if (!isDirectory) await utils.extractEntryToFile(zipfile, entry, entryPath)
+          checkCancellation()
+          files.push({
+            name: path_.basename(entryName),
+            path: path_.join('bin', this.minecraftManifest.id, path_.dirname(entryName), '/'),
+            url: '',
+            sha1: '',
+            size: entry.uncompressedSize,
+            type: isDirectory ? 'FOLDER' : 'NATIVE'
           })
-
-          zipfile.on('end', () => {
-            this.emit('extract_progress', { filename: native.name })
-            resolve()
-          })
-          zipfile.on('error', reject)
-        })
-      })
+        }
+        this.emit('extract_progress', { filename: native.name })
+      } finally {
+        await utils.closeZip(zipfile)
+      }
     }
-
-    // Extracted one archive at a time: two archives writing the same file concurrently can
-    // interleave and produce a corrupted native library.
-    for (const native of natives) {
-      await extract(native)
-    }
-
+    checkCancellation()
     this.emit('extract_end', { amount: files.length })
-
     return { files }
   }
 
@@ -440,6 +380,7 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
       const assets = JSON.parse(assetsContent) as Assets
 
       const promises = Object.entries(assets.objects).map(async ([path, { hash, size }]) => {
+        checkCancellation()
         const assetLegacyPath = path_.join('resources', path_.dirname(path))
         const assetLegacyName = path_.basename(path)
 
@@ -448,6 +389,7 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
         }
 
         if (!existsSync(path_.join(this.config.root, assetLegacyPath, assetLegacyName))) {
+          checkCancellation()
           await fs.copyFile(
             path_.join(this.config.root, 'assets', 'objects', hash.substring(0, 2), hash),
             path_.join(this.config.root, assetLegacyPath, assetLegacyName)
@@ -463,10 +405,11 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
           type: 'ASSET'
         })
 
+        checkCancellation()
         this.emit('copy_progress', { filename: hash, dest: path_.join(assetLegacyPath, assetLegacyName) })
       })
 
-      await Promise.all(promises)
+      await settledOperations(promises)
     }
 
     this.emit('copy_end', { amount: files.length })
@@ -541,7 +484,7 @@ export default class FileManager extends EventEmitter<FileManagerEvents> {
       return { name, path, url, sha1, size, type, extra } as ExtraFile
     })
 
-    const results = await Promise.all(promises)
+    const results = await settledOperations(promises)
     return results.filter((lib): lib is ExtraFile => lib !== null)
   }
 

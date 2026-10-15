@@ -14,6 +14,7 @@ export interface AuthEvents {
 }
 
 export interface LauncherEvents {
+  launch_cancelled: []
   launch_compute_download: []
   launch_download: [
     {
@@ -28,7 +29,7 @@ export interface LauncherEvents {
   ]
   launch_install_loader: [
     {
-      version: string,
+      version: string
       loader: {
         loader: 'vanilla' | 'forge' | 'neoforge' | 'fabric' | 'quilt'
         version: string
@@ -79,6 +80,7 @@ export interface BootstrapEvents {
 }
 
 export interface DownloaderEvents {
+  download_cancelled: [{ downloaded: { amount: number; size: number } }]
   download_progress: [
     {
       total: { amount: number; size: number }

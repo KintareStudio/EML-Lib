@@ -74,7 +74,7 @@ class Manifest {
       if (err instanceof EMLLibError) throw err
       throw new EMLLibError(ErrorType.FILE_ERROR, `Failed to read install profile: ${err instanceof Error ? err.message : err}`)
     } finally {
-      zipfile.close()
+      await utils.closeZip(zipfile)
     }
   }
 
@@ -136,7 +136,7 @@ class Manifest {
           if (err instanceof EMLLibError) throw err
           throw new EMLLibError(ErrorType.FILE_ERROR, `Failed to read loader manifest from installer: ${err instanceof Error ? err.message : err}`)
         } finally {
-          zipfile.close()
+          await utils.closeZip(zipfile)
         }
       }
 
@@ -300,4 +300,3 @@ class Manifest {
 }
 
 export default new Manifest()
-

@@ -23,6 +23,7 @@ import { spawn } from 'node:child_process'
 import { EMLLibError, ErrorType } from '../../types/errors.js'
 import loader from '../utils/loader.js'
 import logParser from '../utils/logparser.js'
+import { OperationOptions, checkCancellation, withOperation } from '../utils/operation.js'
 
 export default class Launcher
   extends EventEmitter<LauncherEvents & DownloaderEvents & CleanerEvents & FileManagerEvents & JavaEvents & PatcherEvents>
@@ -35,6 +36,7 @@ export default class Launcher
   readonly config: ResolvedConfig
   private launchArgs_: string[] = []
   private launcherLogs_: string[] = []
+  private launchInProgress = false
 
   /**
    * Launch Minecraft.
@@ -92,12 +94,26 @@ export default class Launcher
    *
    * _This method will patch the [Log4j vulnerability](https://help.minecraft.net/hc/en-us/articles/4416199399693-Security-Vulnerability-in-Minecraft-Java-Edition)._
    */
-  async launch(): Promise<void> {
+  async launch(options: OperationOptions = {}): Promise<void> {
+    if (this.launchInProgress) throw new EMLLibError(ErrorType.INVALID_OPERATION, 'This launcher already has an active launch.')
+    this.launchInProgress = true
+    try {
+      await withOperation(options, () => this.prepareAndRun())
+    } catch (error) {
+      if (error instanceof EMLLibError && error.code === ErrorType.OPERATION_CANCELLED) this.emit('launch_cancelled')
+      throw error
+    } finally {
+      this.launchInProgress = false
+    }
+  }
+
+  private async prepareAndRun(): Promise<void> {
     //* Init downloader
-    const downloader = new Downloader(this.config.root, this.config.profile.token)
+    const downloader = new Downloader(this.config.root, this.config.profile.token, { adminToolUrl: this.config.url })
 
     //* Init loader
     this.config.minecraft = await loader.updateMinecraftConfig(this.config)
+    checkCancellation()
     const installer = await loader.getInstaller(this.config)
     await downloader.download(installer ? [installer] : [])
 
@@ -105,6 +121,7 @@ export default class Launcher
     const minecraftManifest = await manifests.getMinecraftManifest(this.config)
     const installProfile = await manifests.getInstallProfile(this.config, installer)
     const loaderManifest = await manifests.getLoaderManifests(this.config, installProfile, installer)
+    checkCancellation()
 
     const fileManager = new FileManager(this.config, minecraftManifest, loaderManifest, installProfile, installer)
     const loaderManager = new LoaderManager(this.config, minecraftManifest, loaderManifest, installProfile, installer)
@@ -119,6 +136,7 @@ export default class Launcher
     java.forwardEvents(this)
 
     //* Compute download
+    checkCancellation()
     this.emit('launch_compute_download')
 
     const javaFiles = await fileManager.getJava()
@@ -151,6 +169,7 @@ export default class Launcher
     ]
 
     //* Download
+    checkCancellation()
     this.emit('launch_download', {
       total: {
         amount: filesToDownload.length,
@@ -167,22 +186,27 @@ export default class Launcher
     await downloader.download(loggingFilesToDownload, true)
 
     //* Install loader
+    checkCancellation()
     this.emit('launch_install_loader', this.config.minecraft)
     const loaderFiles = await loaderManager.extract()
 
     //* Path loader
+    checkCancellation()
     this.emit('launch_patch_loader')
     const patchedFiles = await loaderManager.patchLoader()
 
     //* Extract natives
+    checkCancellation()
     this.emit('launch_extract_natives')
     const extractedNativesFiles = await fileManager.extractNatives([...librariesFiles.libraries, ...loaderFiles.libraries])
 
     //* Copy assets
+    checkCancellation()
     this.emit('launch_copy_assets')
     const copiedAssetsFiles = await fileManager.copyAssets()
 
     //* Clean
+    checkCancellation()
     this.emit('launch_clean')
 
     const files = [
@@ -201,10 +225,12 @@ export default class Launcher
     await cleaner.clean(files, this.config.cleaning.ignored, !this.config.cleaning.enabled)
 
     //* Check Java
+    checkCancellation()
     this.emit('launch_check_java')
     const javaInfo = await java.check(this.config.java.absolutePath, minecraftManifest.javaVersion?.majorVersion ?? 8)
 
     //* Launch
+    checkCancellation()
     this.emit('launch_launch', {
       ...this.config,
       java: { ...this.config.java, version: javaInfo.version }
@@ -502,6 +528,7 @@ export default class Launcher
   }
 
   private async run(javaPath: string, args: string[]) {
+    checkCancellation()
     this.launchArgs_ = args
 
     return new Promise<void>((resolve, reject) => {

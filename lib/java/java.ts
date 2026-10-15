@@ -10,7 +10,8 @@ import { File } from '../../types/file.js'
 import path_ from 'node:path'
 import Downloader from '../utils/downloader.js'
 import utils from '../utils/utils.js'
-import { spawn } from 'node:child_process'
+import { preparationProcess } from '../utils/preparation-process.js'
+import { OperationOptions, checkCancellation, withOperation } from '../utils/operation.js'
 import { EMLLibError, ErrorType } from '../../types/errors.js'
 import { MinecraftManifest } from '../../types/manifest.js'
 import { ResolvedConfig } from '../../types/config.js'
@@ -79,12 +80,7 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
       manifest ??
       (await manifests.getMinecraftManifest({ minecraft: { version: this.minecraftVersion ?? undefined }, url: this.url } as ResolvedConfig))
     const jreVersion = (manifest.javaVersion?.component ?? 'jre-legacy') as
-      | 'java-runtime-alpha'
-      | 'java-runtime-beta'
-      | 'java-runtime-delta'
-      | 'java-runtime-gamma'
-      | 'java-runtime-gamma-snapshot'
-      | 'jre-legacy'
+      'java-runtime-alpha' | 'java-runtime-beta' | 'java-runtime-delta' | 'java-runtime-gamma' | 'java-runtime-gamma-snapshot' | 'jre-legacy'
     const jreV = manifest.javaVersion?.majorVersion.toString() ?? '8'
 
     const jreManifest = await manifests.getJavaManifest(jreVersion, jreV)
@@ -121,13 +117,14 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
   /**
    * Download Java for the Minecraft version.
    */
-  async download(): Promise<void> {
-    const files = await this.getFiles()
-
-    const downloader = new Downloader(utils.getServerFolder(this.root))
-    downloader.forwardEvents(this)
-
-    await downloader.download(files)
+  async download(options: OperationOptions = {}): Promise<void> {
+    await withOperation(options, async () => {
+      const files = await this.getFiles()
+      checkCancellation()
+      const downloader = new Downloader(utils.getServerFolder(this.root))
+      downloader.forwardEvents(this)
+      await downloader.download(files)
+    })
   }
 
   /**
@@ -144,38 +141,22 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
     absolutePath: string = path_.join(utils.getServerFolder(this.root), 'runtime', 'jre-${X}', 'bin', 'java'),
     majorVersion: number = 8
   ): Promise<{ version: string; arch: '64-bit' | '32-bit' }> {
-    return new Promise((resolve, reject) => {
-      const javaExec = absolutePath.replace('${X}', majorVersion + '')
-      const process = spawn(javaExec, ['-version'])
-      let output = ''
-
-      process.stdout.on('data', (data) => {
-        output += data.toString()
+    let output = ''
+    try {
+      const code = await preparationProcess(absolutePath.replace('${X}', majorVersion + ''), ['-version'], {}, (chunk) => {
+        output += chunk.toString()
       })
-      process.stderr.on('data', (data) => {
-        output += data.toString()
-      })
-      process.on('error', (err) => {
-        reject(new EMLLibError(ErrorType.JAVA_ERROR, `Java is not correctly installed: ${err.message}`))
-      })
-      process.on('close', (code) => {
-        if (code !== 0 && output.length === 0) {
-          reject(new EMLLibError(ErrorType.JAVA_ERROR, `Java exited with code ${code}`))
-          return
-        }
-
-        const versionMatch = output.match(/"(.*?)"/)
-        const version = versionMatch ? versionMatch.pop() : majorVersion + ''
-        const arch = output.includes('64-Bit') ? '64-bit' : '32-bit'
-        const res = { version: version!, arch: arch as '64-bit' | '32-bit' }
-
-        this.emit('java_info', res)
-        resolve(res)
-      })
-    }) as Promise<{
-      version: string
-      arch: '64-bit' | '32-bit'
-    }>
+      checkCancellation()
+      if (code !== 0 && output.length === 0) throw new EMLLibError(ErrorType.JAVA_ERROR, `Java exited with code ${code}`)
+      const version = output.match(/"(.*?)"/)?.[1] ?? String(majorVersion)
+      const res = { version, arch: (output.includes('64-Bit') ? '64-bit' : '32-bit') as '64-bit' | '32-bit' }
+      this.emit('java_info', res)
+      return res
+    } catch (error) {
+      checkCancellation()
+      if (error instanceof EMLLibError) throw error
+      throw new EMLLibError(ErrorType.JAVA_ERROR, `Java is not correctly installed: ${error instanceof Error ? error.message : error}`)
+    }
   }
 
   private normalizeJavaPath(filePath: string, jreV: string) {
@@ -191,4 +172,3 @@ export default class Java extends EventEmitter<DownloaderEvents & JavaEvents> {
     return path_.join('runtime', `jre-${jreV}`, path_.dirname(filePath), '/')
   }
 }
-
