@@ -68,6 +68,7 @@ export type * from './types/news.js'
 export type * from './types/profile.js'
 export type * from './types/status.js'
 export type * from './types/stats.js'
+export type { SessionCheckResult, SessionWatchOptions, SessionWatchResult } from './lib/kintare/session-events.js'
 
 /**
  * Authenticate a user with Microsoft.
@@ -260,15 +261,15 @@ export { CrashReport }
  *
  * ---
  *
- * [EML Website](https://emlproject.com/) —
- * [Docs](https://emlproject.com/docs/eml-lib-and-launcher/getting-started/set-up-environment) —
- * [GitHub](https://github.com/Electron-Minecraft-Launcher/EML-Lib) —
+ * [EML Website](https://emlproject.com/) -
+ * [Docs](https://emlproject.com/docs/eml-lib-and-launcher/getting-started/set-up-environment) -
+ * [GitHub](https://github.com/Electron-Minecraft-Launcher/EML-Lib) -
  * [NPM](https://www.npmjs.com/package/eml-lib)
  *
  * ---
  *
  * @version 2.8.0
- * @license MIT — See the `LICENSE` file for more information
+ * @license MIT - See the `LICENSE` file for more information
  * @copyright Copyright (c) 2026, GoldFrite and contributors
  */
 const EMLLib = {

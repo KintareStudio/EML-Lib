@@ -2,14 +2,23 @@ import type KintareAuth from '../auth/kintare.js'
 import type { Account } from '../../types/account.js'
 import type { ProfileIdentity } from './profiles.js'
 import { EMLLibError, ErrorType, isEmlNetworkError } from '../../types/errors.js'
+import type { SessionCheckResult, SessionWatchOptions, SessionWatchResult } from './session-events.js'
 
 export type SessionRestoreResult =
   | { status: 'ready'; account: Account; managedProfiles?: ProfileIdentity[] }
   | { status: 'invalid' | 'offline' | 'error'; account: Account; error: unknown }
 
-/** Session policy without filesystem, UI events or an application-owned interval. */
+/** Session policy. The host owns account storage and account selection. */
 export class KintareSessions {
   constructor(private readonly auth: KintareAuth) {}
+
+  check(account: Account, signal?: AbortSignal): Promise<SessionCheckResult> {
+    return this.auth.checkSession(account, signal)
+  }
+
+  watch(account: Account, options: SessionWatchOptions): Promise<SessionWatchResult> {
+    return this.auth.watchSession(account, options)
+  }
 
   async restore(account: Account, managed: ProfileIdentity[] = [], onOffline?: (source: 'services') => void): Promise<SessionRestoreResult> {
     let current: Account

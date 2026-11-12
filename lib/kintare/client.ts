@@ -42,7 +42,7 @@ export class KintareClient {
     })
   }
   async authAgentArguments(jarPath: string): Promise<string[]> {
-    return AuthAgent.javaArguments(jarPath, new URL(this.options.issuer ?? 'https://accounts.kintarestudio.com').host, {
+    return AuthAgent.javaArguments(jarPath, this.endpoints.authlibInjectorUrl(), {
       'Loki.enforce_secure_profile': true,
       'Loki.debug': true,
       'Loki.chat_restrictions': true
