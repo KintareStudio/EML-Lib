@@ -19,6 +19,8 @@ export interface KintareOptions extends HttpOptions {
   authAgentRelease?: GitHubReleaseOptions | false
   /** OIDC issuer, including its mount path. */
   issuer?: string
+  /** Metadata URL for deployments that serve authlib-injector on a separate host. */
+  authlibInjectorUrl?: string
   /** Explicit locations override discovery. Useful for extensions absent on older servers. */
   endpoints?: Partial<KintareEndpoints>
   /** Additional origins authorized to receive credentials from this client. */
@@ -153,6 +155,15 @@ export class KintareEndpointResolver {
   }
   async servicesUrl(path: string): Promise<string> {
     return `${(await this.resolve()).services}${path}`
+  }
+  sessionEventsUrl(): string {
+    return new URL('/auth/session/events', this.issuer).href
+  }
+  authlibInjectorUrl(): string {
+    const url = new URL(this.options.authlibInjectorUrl ?? new URL('/authlib-injector', this.issuer).href)
+    const normalized = trustedKintareUrl(url.href, '', new Set([url.origin]))
+    if (!normalized) throw new Error('Invalid authlib-injector metadata URL.')
+    return normalized
   }
   async sessionsUrl(path: string): Promise<string> {
     return `${(await this.resolve()).sessions}${path}`

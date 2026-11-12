@@ -521,8 +521,14 @@ test('connectivity probes and auth-agent arguments follow a configured deploymen
   assert.deepEqual(await client.ping(), { oidc: true, yggdrasil: true, services: true })
   assert.ok(urls.every((url) => url.startsWith('https://custom.example/')))
   const args = await client.authAgentArguments('/fixture/agent.jar')
-  assert.ok(args[0].endsWith('=custom.example'))
+  assert.equal(args[0], '-javaagent:/fixture/agent.jar=https://custom.example/authlib-injector')
   assert.ok(args.includes('-DLoki.enforce_secure_profile=true'))
+  const withDiscovery = new KintareClient({
+    issuer: 'https://custom.example/oidc',
+    authlibInjectorUrl: 'https://discover.example/authlib-injector'
+  })
+  assert.equal((await withDiscovery.authAgentArguments('/fixture/agent.jar'))[0],
+    '-javaagent:/fixture/agent.jar=https://discover.example/authlib-injector')
 })
 
 test('existing news and downloader classes use the configured transport and do not retry a rate limit', async (t) => {

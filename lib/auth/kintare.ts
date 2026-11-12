@@ -14,6 +14,7 @@ import EventEmitter from '../utils/events.js'
 import { HttpClient, httpError, requestError } from '../http/http.js'
 import { KintareEndpointResolver, KintareOptions } from '../kintare/endpoints.js'
 import { KintareGameSession, GameSessionOptions } from '../kintare/game-session.js'
+import { KintareSessionEvents, type SessionCheckResult, type SessionWatchOptions, type SessionWatchResult } from '../kintare/session-events.js'
 
 const DEFAULT_CLIENT_ID = '859de4f4-1db6-4ded-801f-68d321d9f106'
 function classifyStatus(status: number): ErrorCode {
@@ -24,7 +25,7 @@ function classifyStatus(status: number): ErrorCode {
  * Authenticate a user with [Kintare](https://kintare.studio/).
  *
  * **Attention!** For skin/cape management, use this class's own `uploadSkin()`, `uploadCape()`,
- * `deleteSkin()`, `deleteCape()` and `getPlayerProfile()` methods — **do not** use the generic
+ * `deleteSkin()`, `deleteCape()` and `getPlayerProfile()` methods - **do not** use the generic
  * `Skin` class with a Kintare account. `Skin` only knows how to talk to Microsoft, Yggdrasil and
  * Azuriom accounts; since Kintare accounts are tagged `meta.type: 'msa'` for launch-argument
  * compatibility, `Skin` would silently route skin/cape calls to Microsoft's API instead of
@@ -33,7 +34,7 @@ function classifyStatus(status: number): ErrorCode {
 export default class KintareAuth extends EventEmitter<AuthEvents> implements IStatProvider {
   /**
    * Kintare is a Yggdrasil-compatible provider, and is deliberately reported as `AUTH_YGGDRASIL`
-   * rather than as a bespoke Kintare provider — `Stats` derives the reported login type from this
+   * rather than as a bespoke Kintare provider - `Stats` derives the reported login type from this
    * value, so logins are counted as `yggdrasil` upstream. The crash-report counterpart is
    * `meta.reportType` on the accounts built below.
    */
@@ -41,6 +42,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
   private readonly clientId: string
   private readonly http: HttpClient
   private readonly endpoints: KintareEndpointResolver
+  private readonly sessionEvents: KintareSessionEvents
   private readonly refreshing = new Map<string, Promise<Account>>()
 
   /**
@@ -53,11 +55,12 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
     this.clientId = (typeof clientId === 'object' ? clientId.clientId : clientId) ?? DEFAULT_CLIENT_ID
     this.http = new HttpClient(options)
     this.endpoints = endpoints ?? new KintareEndpointResolver(options)
+    this.sessionEvents = new KintareSessionEvents(this.http, this.endpoints.sessionEventsUrl(), options.timeoutMs)
   }
 
   /**
    * Authenticate a user with Kintare using the device code flow.
-   * @param onCode Called once the device code is ready — show the code and URL to the user.
+   * @param onCode Called once the device code is ready - show the code and URL to the user.
    * @param selectProfile [Optional] Called when the account has more than one Minecraft profile, so
    * the consumer can prompt the user and resolve the choice asynchronously (e.g. over IPC). Return
    * `null` if the user cancels. If omitted, the previous behavior is preserved: a `MultipleProfiles`
@@ -161,7 +164,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
   }
 
   /**
-   * Decode the payload of a Kintare OIDC JWT (no signature verification — for reading claims only).
+   * Decode the payload of a Kintare OIDC JWT (no signature verification - for reading claims only).
    * @param accessToken The JWT access token.
    * @returns The decoded payload, or `{}` if it couldn't be parsed.
    */
@@ -221,7 +224,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
   }
 
   /**
-   * Reconcile a stored account against a freshly-fetched profile list — e.g. after the user creates,
+   * Reconcile a stored account against a freshly-fetched profile list - e.g. after the user creates,
    * renames, or deletes their Minecraft profile elsewhere. Picks the profile that matches the
    * account's current UUID if still present, auto-selects when there's exactly one profile, and
    * otherwise marks the account as having no profile selected.
@@ -273,7 +276,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
   }
 
   /**
-   * Validate a user's OIDC JWT by checking its expiry locally — no network call.
+   * Validate a user's OIDC JWT by checking its expiry locally - no network call.
    * @param user The user account to validate.
    * @returns `true` if the token is still valid, `false` otherwise.
    */
@@ -291,12 +294,38 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
     }
   }
 
+  /** Ask Accounts whether this OAuth credential still belongs to a live authorization. */
+  checkSession(user: Account, signal?: AbortSignal): Promise<SessionCheckResult> {
+    return this.sessionEvents.check(user, signal)
+  }
+
+  /** Monitor one account until it signs out, needs login, or is no longer selected. */
+  watchSession(user: Account, options: SessionWatchOptions): Promise<SessionWatchResult> {
+    return this.sessionEvents.watch(user, options, (account) => this.refresh(account))
+  }
+
   /**
    * Refresh a user's OIDC tokens using the refresh token.
    * @param user The user account to refresh.
    * @returns The refreshed account information.
    */
   async refresh(user: Account): Promise<Account> {
+    const key = user.refreshToken ?? user.accessToken
+    const existing = this.refreshing.get(key)
+    if (existing) {
+      const { accessToken, refreshToken, meta } = await existing
+      return { ...user, accessToken, refreshToken, meta }
+    }
+    const pending = this.refreshTokens(user)
+    this.refreshing.set(key, pending)
+    try {
+      return await pending
+    } finally {
+      if (this.refreshing.get(key) === pending) this.refreshing.delete(key)
+    }
+  }
+
+  private async refreshTokens(user: Account): Promise<Account> {
     try {
       const ep = await this.endpoints.resolve()
       const req = await this.http.fetch(ep.token, {
@@ -362,7 +391,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
    * Get a short-lived Yggdrasil JWT for game launch. Call this immediately before `launcher.launch()`.
    * @param user The user account.
    * @returns The Yggdrasil JWT (1h TTL) and its clientToken. Pass accessToken as
-   * `config.account.accessToken`, and hang onto clientToken — it's required later to
+   * `config.account.accessToken`, and hang onto clientToken - it's required later to
    * validate/refresh/invalidate this specific token via the standard Yggdrasil API,
    * and there is no way to recover it after this call returns.
    */
@@ -422,11 +451,11 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
 
   /**
    * Invalidate a single ephemeral Yggdrasil game token (as returned by `getGameToken()`).
-   * Call this when the game process exits — it closes just that one Yggdrasil session
+   * Call this when the game process exits - it closes just that one Yggdrasil session
    * without touching the user's OIDC login (unlike `logout()`, which revokes the refresh
    * token for the whole account).
    * @param gameToken The Yggdrasil JWT previously obtained from `getGameToken()`.
-   * @param clientToken The clientToken returned alongside that same token — required by
+   * @param clientToken The clientToken returned alongside that same token - required by
    * `/invalidate` to match the stored session; there's no way to invalidate without it.
    */
   async invalidateGameToken(gameToken: string, clientToken: string): Promise<void> {
@@ -477,7 +506,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
    * @param user The user account (for auth token).
    * @param profileId The Minecraft profile UUID (dashless).
    * @param file The skin PNG file as a Buffer.
-   * @param model The skin model — `'slim'` for slim arms, or omit/empty string for classic.
+   * @param model The skin model - `'slim'` for slim arms, or omit/empty string for classic.
    */
   async uploadSkin(user: Account, file: Buffer, model?: 'slim', profileId?: string): Promise<void> {
     try {
@@ -661,7 +690,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
   }
 
   /**
-   * Check if a player name is available. Permission-aware — higher-privilege users may see reserved names as available.
+   * Check if a player name is available. Permission-aware - higher-privilege users may see reserved names as available.
    * @param user The user account (for auth token).
    * @param name The player name to check.
    * @returns The availability status: `'AVAILABLE'`, `'DUPLICATE'`, or `'NOT_ALLOWED'`.
@@ -740,16 +769,7 @@ export default class KintareAuth extends EventEmitter<AuthEvents> implements ISt
   /** Concurrent consumers share one refresh-token rotation. Persistence remains the host's job. */
   async ensureSession(account: Account): Promise<Account> {
     if (await this.validate(account)) return account
-    const key = account.refreshToken ?? account.accessToken
-    const existing = this.refreshing.get(key)
-    if (existing) return { ...account, ...(await existing), uuid: account.uuid, name: account.name }
-    const pending = this.refresh(account)
-    this.refreshing.set(key, pending)
-    try {
-      return await pending
-    } finally {
-      if (this.refreshing.get(key) === pending) this.refreshing.delete(key)
-    }
+    return this.refresh(account)
   }
 
   async selectableProfiles(
